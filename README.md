@@ -66,7 +66,7 @@ flowchart TD
     Q([queued]) --> S[scoping]
     S --> H1{{"HUMAN GATE 1<br>confirm the contract"}}
     H1 --> C["coding<br><i>isolated git worktree</i>"]
-    C --> T["TEST GATE<br><b>deterministic, model-independent</b>"]
+    C --> T["TEST GATE<br>deterministic<br>model-independent"]
     T -->|fails| R[rework]
     T -->|passes| V["reviewer<br><i>judges what tests cannot</i>"]
     V -->|needs-changes| R

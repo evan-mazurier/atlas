@@ -62,23 +62,23 @@ The live classification of everything that runs, and at which rung, is
 ## How a job actually flows
 
 ```mermaid
-flowchart LR
+flowchart TD
     Q([queued]) --> S[scoping]
-    S --> H1{{"human confirms<br/>the contract"}}
-    H1 --> C[coding<br/><i>isolated worktree</i>]
-    C --> T["test gate<br/><b>deterministic</b>"]
+    S --> H1{{"HUMAN GATE 1<br>confirm the contract"}}
+    H1 --> C["coding<br><i>isolated git worktree</i>"]
+    C --> T["TEST GATE<br><b>deterministic, model-independent</b>"]
     T -->|fails| R[rework]
-    R -->|"capped"| T
-    R -->|"cap hit"| E([escalate])
-    T -->|passes| V["reviewer<br/><i>judges the residue</i>"]
+    T -->|passes| V["reviewer<br><i>judges what tests cannot</i>"]
     V -->|needs-changes| R
+    R -->|under the cap| T
+    R -->|cap hit| E([escalate to a human])
     V -->|commit-ready| RD([ready])
-    RD --> H2{{"human merges"}}
+    RD --> H2{{"HUMAN GATE 2<br>merge"}}
     H2 --> M([merged])
 
-    style H1 fill:#f6c344,stroke:#b8860b,color:#000
-    style H2 fill:#f6c344,stroke:#b8860b,color:#000
-    style T fill:#4a9d5f,stroke:#2d6b3d,color:#fff
+    style H1 fill:#f6c344,stroke:#b8860b,stroke-width:2px,color:#000
+    style H2 fill:#f6c344,stroke:#b8860b,stroke-width:2px,color:#000
+    style T fill:#4a9d5f,stroke:#2d6b3d,stroke-width:2px,color:#fff
     style E fill:#c94f4f,stroke:#8b2e2e,color:#fff
 ```
 

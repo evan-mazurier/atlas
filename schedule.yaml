@@ -1,0 +1,96 @@
+# ATLAS GLOBAL SCHEDULE  —  Atlas-owned (control plane). See docs/scheduling.md.
+#
+# Holds AVAILABILITY (when the operator is NOT available) + each task's intra-day PLACEMENT
+# around it. This is NOT a project sidecar — Atlas owns and writes it. Placements REFERENCE
+# project tasks (project + task + session); the task itself is single-sourced in that project's
+# plan.yaml, so nothing here is ever a copy.
+#
+# It fills in from two directions:
+#   • availability — blocked time, entered by the operator;
+#   • placements   — the scheduling assistant fitting ready tasks into the free time, written
+#                    here on approval. Each session's completion is tracked in plan.yaml
+#                    (sessions_done); a placement gains `done: true` for the day-view to strike it.
+#
+# EVERY write path through this file — the assistant's, the UI's, the API's — goes through
+# `dashboard/schedmath.py` first. It is the deterministic collision guard: no two items may
+# overlap on a day, and nothing may land on unavailable time. The model proposes placements;
+# whether a placement is LEGAL is arithmetic, not judgment, so it is not the model's call.
+#
+# This is a WORKED EXAMPLE with illustrative dates (see registry.yaml).
+
+# AVAILABILITY — the 6am–midnight lane is FREE by default; entries here carve out UNAVAILABLE time.
+availability:
+  blocks:
+    - { day: 2026-03-10, start: "09:00", end: "11:00" }   # hour-level carve-out
+    - { day: 2026-03-12, start: "14:00", end: "15:30" }
+  full_days:
+    - 2026-03-14      # whole day unavailable — a hard block, not "the day is mostly free"
+
+# PLACEMENTS — one entry per work-SESSION of a task, dropped into a concrete day + hour-slot. A
+# task may have SEVERAL placements (it splits across slots/days). The `session` id must match a
+# `sessions:` entry on the referenced task in its plan.yaml — that link is what resolves a
+# placement back to its real task, and why a placement can never drift from the plan.
+placements:
+  - session: sess_a1b2c3
+    project: orchard-api
+    task: sync-endpoint-v2
+    day: 2026-03-10
+    start: "11:00"
+    end: "13:00"
+  - session: sess_d4e5f6
+    project: orchard-api
+    task: sync-endpoint-v2
+    day: 2026-03-11
+    start: "09:00"
+    end: "11:00"
+    done: true
+  - session: sess_g7h8i9
+    project: orchard-site
+    task: guides-nav-restructure
+    day: 2026-03-11
+    start: "14:00"
+    end: "16:00"
+  - session: sess_j1k2l3
+    project: orchard-journal
+    task: issue-14-draft
+    day: 2026-03-12
+    start: "09:30"
+    end: "11:00"
+    pinned: true          # the operator placed this one by hand; the assistant may not move it
+  - session: sess_m4n5o6
+    project: almanac
+    task: walkforward-rerun
+    day: 2026-03-13
+    start: "10:00"
+    end: "12:30"
+
+# LIFE EVENTS — typed, recurring entries that consume time the same way a block does.
+# `busy: false` marks something on the calendar that does NOT reserve the slot.
+#
+# `overrides` and `skips` are per-OCCURRENCE exceptions: they retime or delete ONE instance of a
+# recurring series without touching the rest of it. Editing the series to fix one week is the
+# obvious approach and it is wrong — it silently rewrites history and every future occurrence.
+events:
+  - id: evt_standup
+    title: "Weekly review"
+    type: appointment
+    day: 2026-03-02
+    start: "08:30"
+    end: "09:00"
+    recur: { freq: weekly, interval: 1 }
+    overrides:
+      "2026-03-16": { start: "15:00", end: "15:30" }   # this one week only, moved
+    skips:
+      - 2026-03-23                                     # this one week only, cancelled
+  - id: evt_deepwork
+    title: "Deep work block"
+    type: focus
+    day: 2026-03-03
+    start: "09:00"
+    end: "12:00"
+    recur: { freq: weekly, interval: 1 }
+  - id: evt_reminder
+    title: "Renew the domain"
+    type: reminder
+    day: 2026-03-20
+    busy: false        # on the calendar, but it reserves nothing

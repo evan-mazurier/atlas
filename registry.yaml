@@ -1,0 +1,141 @@
+# Atlas project registry — the list of projects the control plane watches.
+# Each entry points at that project's status.yaml sidecar (the contract).
+# To add a project: give it a status.yaml (copy the schema) and add it here.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# THIS IS A WORKED EXAMPLE. The projects below are fictional; the real registry this was
+# extracted from is private. They are kept deliberately varied because the point of the file
+# is NOT "here are some projects" — it is that Atlas automates each of them DIFFERENTLY, and
+# the difference is driven by one question: what can actually verify the work?
+# See automation-map.yaml for how each of these lands on the ladder.
+# ─────────────────────────────────────────────────────────────────────────────────────────
+#
+# `test_cmd` (optional) is the project's hard gate for autonomous write-dispatch (Stage 4): the
+# worker runs it, UNSANDBOXED, inside the job's worktree after the coding session, and only commits
+# if it passes. Run with cwd = the worktree, so it tests the dispatched changes. A project with no
+# objectively checkable output has NO test_cmd — it falls back to the review-only judgment gate.
+# That absence is a design decision, not an oversight; see orchard-journal below.
+#
+# `procedures_file` (optional) points at the project's procedures.yaml — its declared list of
+# REPEATABLE, never-changing operations (session-start/end, etc.) the brain can dispatch without
+# scoping. Anything needing reflection is NOT a procedure → it falls into scoping.
+# Lives in the project (work plane); Atlas only reads it.
+
+# ── The Brain — the personal knowledge layer (docs/brain.md) ──────────────────────────────
+# A TOP-LEVEL key, deliberately NOT an entry under `projects:`. The Brain is not a project: it
+# has no status.yaml, no work, no gate, and must never render as a project card. Keeping it out
+# of `projects:` is what guarantees that — the registry loader reads `projects` only, so this
+# key is structurally invisible to the canvas.
+#
+# The corpus is its own PRIVATE git repo OUTSIDE the Atlas repo, so its contents never enter this
+# codebase's history. That separation is the whole reason the memory layer can be published while
+# what it remembers is not. Override for tests/relocation with the ATLAS_BRAIN env var.
+brain:
+  path: "D:\\work\\brain"
+
+projects:
+  # ── Orchard umbrella ─────────────────────────────────────────────────────────────────────
+  # An umbrella groups sub-projects that share a company-wide decision vault and a set of
+  # cross-cutting agents, while each stays independently dispatchable with its own gate.
+  # `parent:` is the only wiring needed — Atlas groups them in the UI and resolves umbrella-tier
+  # agents from umbrellas/<parent>/.
+
+  - id: orchard-api
+    parent: orchard
+    label: "Orchard API"
+    # The backend service behind the app: REST endpoints, database, auth, sync.
+    # THE FULLEST GATED INSTANCE. Everything a rung-2 loop needs is present here — a fast,
+    # hermetic test suite that a clean worktree checkout can run with no secrets and no network.
+    # That property is what earns this project the most autonomy of anything in the registry:
+    # the model may iterate unattended precisely because something other than a model decides
+    # when it is done.
+    status_file: "D:\\work\\orchard-api\\status.yaml"
+    procedures_file: "D:\\work\\orchard-api\\procedures.yaml"
+    agents_file: "D:\\work\\orchard-api\\agents.yaml"
+    plan_file: "D:\\work\\orchard-api\\plan.yaml"
+    # Hard gate (Stage 4). Hermetic by construction: tests needing a paid API are marked and skip
+    # by default, so a fresh worktree is green. A gate that only passes on the developer's machine
+    # is not a gate.
+    test_cmd: "py -3.12 -m pytest -q"
+    aliases: ["api", "backend", "orchard api"]
+
+  - id: orchard-site
+    parent: orchard
+    label: "Orchard Site"
+    # The public website: marketing pages plus a library of written guides.
+    # THE INTERESTING LIMIT CASE. There IS a gate here, and it is deterministic — but read what
+    # it actually proves. `npm run build` proves the site RENDERS. It cannot prove a single
+    # sentence on it is TRUE. So the gate is a floor against broken output, never a substitute
+    # for the human check on the content itself, and the agents.yaml for this project says so
+    # explicitly. Mistaking a form check for a truth check is the most expensive error the
+    # ladder exists to prevent.
+    status_file: "D:\\work\\orchard-site\\status.yaml"
+    procedures_file: "D:\\work\\orchard-site\\procedures.yaml"
+    agents_file: "D:\\work\\orchard-site\\agents.yaml"
+    plan_file: "D:\\work\\orchard-site\\plan.yaml"
+    # node_modules is gitignored, so the gate installs the correct deps in the fresh worktree
+    # rather than trusting whatever is checked in.
+    test_cmd: "npm ci && npm run build"
+    aliases: ["site", "website", "docs site"]
+
+  - id: orchard-journal
+    parent: orchard
+    label: "Orchard Journal"
+    # The newsletter and the posts that go with it. No code — a folder of drafts and a queue.
+    #
+    # NO test_cmd, AND THAT IS THE POINT. Writing quality is not objectively checkable, so there
+    # is nothing here for a hard gate to gate. The doctrine's answer to "no validator exists" is
+    # NOT a weaker automatic gate that waves work through on a model's opinion — it is an honest
+    # human gate and a lower rung. Autonomy is not available at any price when nothing independent
+    # can confirm the result, and pretending otherwise is how a system loses trust quietly.
+    #
+    # This project is the deliberate contrast to orchard-api directly above: same doctrine, same
+    # machinery, opposite conclusion, because the validator question has a different answer.
+    status_file: "D:\\work\\orchard-journal\\status.yaml"
+    procedures_file: "D:\\work\\orchard-journal\\procedures.yaml"
+    agents_file: "D:\\work\\orchard-journal\\agents.yaml"
+    plan_file: "D:\\work\\orchard-journal\\plan.yaml"
+    aliases: ["journal", "newsletter", "content"]
+
+  - id: orchard-ops
+    parent: orchard
+    label: "Orchard Ops"
+    # The business side: pricing, invoicing, support replies, supplier admin.
+    #
+    # Deliberately LIGHTWEIGHT: no agents_file, no procedures_file, no test_cmd. This project is
+    # ops — almost nothing in it is software, so there is nothing for a gate to gate and no agent
+    # org worth authoring. Its plan is nearly all `type: manual`.
+    #
+    # It is in the registry anyway because Atlas still tracks its plan and its next action. A
+    # project earns automation by having something verifiable in it, not by being important.
+    status_file: "D:\\work\\orchard-ops\\status.yaml"
+    plan_file: "D:\\work\\orchard-ops\\plan.yaml"
+    aliases: ["ops", "admin", "business"]
+
+  # ─────────────────────────────────────────────────────────────────────────────────────────
+  - id: almanac
+    label: "Almanac"
+    # A standalone demand-forecasting engine. NOT under the umbrella — it shares no vault and no
+    # cross-cutting agents with Orchard, and the registry handles both shapes without special-casing.
+    #
+    # The teaching case for WHERE the model is allowed to be. The forecast itself runs ZERO LLM at
+    # inference, by decision: the edge has to be reproducible and auditable, and a number a model
+    # invented at runtime is neither. AI is confined to development and parameter search, where a
+    # deterministic scorer can grade it. See automation-map.yaml for the full rung profile.
+    status_file: "D:\\work\\almanac\\status.yaml"
+    procedures_file: "D:\\work\\almanac\\procedures.yaml"
+    agents_file: "D:\\work\\almanac\\agents.yaml"
+    vault_path: "D:\\work\\almanac\\wiki"   # its own decision vault, read via vault.py (vault_id=almanac)
+    # Sidecars and code live in SEPARATE repos: status/procedures/plan sit with the vault, while
+    # dispatched code work and the test gate run in the engine repo. `code_path` overrides the
+    # dispatch cwd for this split-repo case; the sidecars still resolve from status_file's dir.
+    code_path: "D:\\work\\almanac-engine"
+    # Hard gate (Stage 4): run in a fresh worktree of code_path. The disk-backed tests skip when
+    # the historical data directory is absent (the worktree case), so a clean checkout is green;
+    # the self-contained engine tests guard the deterministic core.
+    test_cmd: "py -3.12 -m pytest -q"
+    aliases: ["forecast", "forecasting", "engine"]
+
+  # retired-tool — UNWIRED: the project shipped and is complete, so Atlas no longer watches it.
+  # The repo stays on disk. Unwiring is a one-line delete here rather than a migration, which is
+  # the property that makes adding a project cheap enough to be worth doing.

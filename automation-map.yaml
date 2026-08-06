@@ -1,0 +1,282 @@
+# automation-map.yaml — Atlas's self-model (machine-readable form of docs/automation-patterns.md §6).
+# The doctrine ladder view reads THIS file. The doc's §6 points here, so there is ONE source of
+# truth. A new capability Atlas takes on = a new entry under `components` below.
+#
+# Granularity: decision-bearing + teaching — list everything rung 1+ (uses an LLM), the notable
+# rung-0 cases that PROVE the discipline, the boundary, and one reflexive entry. NOT an inventory
+# of every deterministic display panel (most of the UI is rung 0 by default, which is the point).
+#
+# The per-project entries use the fictional example registry (see registry.yaml). They are kept
+# because the ladder is only legible when you can see it reach DIFFERENT conclusions about
+# different work — orchard-api and orchard-journal run the same doctrine to opposite answers.
+
+# ---- the ladder itself (stable doctrine; rarely changes) ----
+ladder:
+  - rung: "0"
+    name: Deterministic
+    definition: Code, no LLM — a calculation, lookup, or rule.
+    validation: The code's own correctness / unit tests.
+    token_cost: "~0 (no LLM)"
+  - rung: "1"
+    name: One-shot prompt
+    definition: A single LLM call, output used directly.
+    validation: None / implicit — output is self-evident or a mistake is cheap & recoverable.
+    token_cost: "1 generation"
+  - rung: "1.5"
+    name: One-shot + verify
+    definition: One call, then a deterministic check accepts it or hard-escalates. No iteration.
+    validation: A deterministic oracle, applied once.
+    token_cost: "1 gen + 1 check"
+  - rung: "2"
+    name: Loop (iterate-against-validator)
+    definition: The model iterates, re-checked each round, until the validator passes or a cap is hit.
+    validation: A validator good enough to score progress and define "done" — deterministic preferred.
+    token_cost: "N generations (bounded)"
+  - rung: "2.5"
+    name: Fan-out + select
+    definition: N independent attempts in parallel; a comparator picks the best. Breadth, not depth.
+    validation: A comparator / judge that can rank candidates.
+    token_cost: "N in parallel"
+  - rung: boundary
+    name: Never-automate
+    definition: The human does the action. Automation may prepare (draft/compute), never execute.
+    validation: The human.
+    token_cost: "n/a"
+
+# ---- the core selection principles (shown at the head of the view) ----
+principles:
+  - Pick the lowest rung that clears the trust bar for this task.
+  - Engineer the validator, not the automation — push it as deterministic as possible.
+  - Trust comes from independent, uncorrelated validators — at least one deterministic.
+  - Keep the loop human-legible; the human gates every irreversible / outward-facing step.
+
+# ---- the classified capabilities (rendered as chips on their rung) ----
+# subject: atlas-core | <project id from registry.yaml>
+components:
+  - name: Progress %, at-risk color, status & cost aggregation, merge-advance hook
+    rung: "0"
+    subject: atlas-core
+    validation: Pure functions over on-disk data — no LLM by design.
+    note: Stands in for the bulk of the UI, which is rung 0.
+  - name: Voice command parse + morning-briefing answers
+    rung: "0"
+    subject: atlas-core
+    validation: Deterministic regex parse + deterministic read of the live snapshot.
+    note: >
+      Teaching case — deliberately rung 0 over an LLM, so the numbers spoken can't disagree with
+      the numbers on screen. Two sources for one fact is a bug even when both are usually right.
+  - name: Automation-patterns ladder (this view)
+    rung: "0"
+    subject: atlas-core
+    validation: Pure rendering over automation-map.yaml — no LLM.
+    note: You are here. The self-model obeys its own rule.
+  - name: Receptionist Q&A over live status
+    rung: "1"
+    subject: atlas-core
+    validation: Implicit — a wrong answer is cheap and the operator is right there.
+  - name: Architect / scoper / planner proposals
+    rung: "1.5"
+    subject: atlas-core
+    validation: One proposal → the operator approves / edits / revises (human as the check); no autonomous iteration.
+  - name: Stage-4 gate engine
+    rung: "2"
+    subject: atlas-core
+    validation: Deterministic test gate (floor) + LLM reviewer (residue); iteration-capped; human gates the merge.
+    note: >
+      The canonical rung 2 — how Atlas earns autonomy through verifiability. The reviewer sees the
+      REAL test result, never the worker's account of it; a worker that could narrate its own gate
+      result would be grading its own exam.
+  # NOTE — rung 2.5 (fan-out + select) is defined in the ladder above but has NO capability
+  # using it yet, so it gets no component entry here (the self-model lists only what RUNS, not
+  # what is available). Add one when some design/scoping work actually fans out. Naming an unused
+  # rung is cheap and steers future work; listing an unused rung as live would be a lie.
+  - name: Merge approval · client comms · money movement · releases
+    rung: boundary
+    subject: atlas-core
+    validation: Human executes; automation only prepares (drafts, computes, summarizes).
+
+  # --- Multi-worker global engine (Stage 4c, docs/agentic-structure.md) ---
+  - name: Multi-worker scheduler — cross-job concurrency, permits, overlap, re-gate
+    rung: "0"
+    subject: atlas-core
+    validation: >
+      Deterministic ready-set DAG (no LLM decides what runs next) under two global permits —
+      MAX_WORKERS model sessions, MAX_SUITES test suites — spanning cross-job AND within-job lanes;
+      a cross-session same-project path-overlap check SERIALIZES rather than races; siblings
+      rebase-on-merge and re-gate against the moved base. 174 offline tests plus a full-saturation
+      campaign with every cap binding.
+    note: >
+      Teaching case — the thing deciding what runs, when, and against what base is plain code. The
+      LLM does the work inside a lane; it never schedules itself. NOT rung 2.5 — lanes are different
+      steps of one plan, all kept and joined, not N attempts at the same task with a comparator
+      picking one.
+
+  # --- Scheduling layer (Stage 6.5, docs/scheduling.md) ---
+  - name: Scheduling assistant — fit ready tasks into real free time
+    rung: "1.5"
+    subject: atlas-core
+    validation: >
+      The planner's GLOBAL mode proposes a schedule.yaml; `dashboard/schedmath.py` is the
+      deterministic collision guard EVERY write path consults — no two items may overlap on a day
+      and nothing may land on unavailable time — then the operator approves. One proposal, one
+      deterministic check, no autonomous iteration.
+    note: >
+      The validator is the interesting part — the model proposes placements, but whether a placement
+      is LEGAL is arithmetic, not judgment. schedmath is fully self-contained (no Atlas imports) so
+      every consumer shares one guard rather than reimplementing the rule and drifting.
+
+  # --- The Brain (Stage 7, docs/brain.md) — the memory layer ---
+  - name: Brain — the deterministic write path
+    rung: "0"
+    subject: atlas-core
+    validation: >
+      One function — brain.write_note (validate → write → commit) — is the ONLY way a note reaches
+      disk. Schema-validated, ~1 KB hard cap, slug collisions become `slug-2` rather than clobbering.
+      A model may only PROPOSE; the deterministic writer commits after the operator accepts.
+    note: >
+      Teaching case, and the rule the whole layer rests on — a corpus that models could write to
+      would silently fill with model-invented facts, and a memory you cannot trust is worse than no
+      memory, because you stop checking it. Capture is rung 0 end to end.
+  - name: Brain — retrieval into the receptionist
+    rung: "1.5"
+    subject: atlas-core
+    validation: >
+      One selection call sees the WHOLE description index (no pre-filter narrows what it may choose),
+      then two deterministic checks — a name the model invented is dropped, and a failed or empty
+      selection degrades to description-matching rather than to no Brain at all. Capped at 5 whole
+      notes. Replies carry cited-note chips.
+    note: >
+      Graduated to one consumer at a time, each earning it separately, rather than switched on
+      everywhere at once — the trust axis is visible-vs-autonomous consumers, and a retrieval error
+      is cheap in a reply the operator is reading and expensive in a decision made unattended.
+  - name: brain-keeper — proposes notes from two disjoint readers
+    rung: "1.5"
+    subject: atlas-core
+    validation: >
+      Reader 1 PULLS agent memory files, reader 2 PUSHES conversation turns judged as they happen;
+      territories are disjoint BY CONSTRUCTION (Atlas records its own session ids and reader 1 skips
+      memory files that came from them), so they cannot double-count. Every output is a PROPOSAL —
+      it reaches disk only through the rung-0 writer above, after the operator accepts.
+    note: Disjoint-by-construction beats de-duplication after the fact, which is a filter you have to keep tuning.
+
+  # --- Orchard (umbrella) — how work over the shared decision vault is automated ---
+  - name: Ask Orchard — Q&A grounded in the decision vault
+    rung: "1"
+    subject: orchard
+    validation: >
+      Read-only; retrieval is deterministic (rung 0) and the answer is one grounded generation that
+      cites its sources — a wrong answer is cheap and checkable against the cited doc.
+    note: The umbrella's read lens over the vault. Its write counterpart is the vault-keeper below.
+  - name: Vault-keeper — gated writes to the shared decision vault
+    rung: "1.5"
+    subject: orchard
+    validation: >
+      One draft → deterministic vault-lint (dashboard/vault.py:lint — every [[link]] resolves,
+      frontmatter parses) → human gate. WRITE-authorized but propose-only: drafts a change-summary
+      with the full draft one click away, never commits unreviewed work; git is used ONLY to land an
+      approved change. No autonomous iteration, no autonomous commit; hard-escalates on lint failure
+      or unclear intent.
+    note: >
+      The one place in the system holding a write permission alongside a model, and the reason it is
+      allowed to is that the check accepting its draft is CODE. Judges before writing — the vault
+      records decisions, not activity — so the common correct output is "nothing to record".
+
+  # --- Orchard API — the fullest gated-engineering instance ---
+  - name: Backend engineering — test floor, reviewer residue, capped rework
+    rung: "2"
+    subject: orchard-api
+    validation: >
+      The deterministic floor is the hermetic pytest suite (paid-API tests are marked and skip, so a
+      clean worktree checkout is green). The gatekeeper then reviews the diff against the CONTRACT
+      and the REAL test result, never the worker's account of it; verdict commit-ready or
+      needs-changes, iteration-capped. The operator gates the merge.
+    note: >
+      The fullest rung-2 instance in the registry, and the one the multi-worker engine was proven on
+      — two lanes, concurrent worktrees, green per lane AND green on the integrated tree after the
+      join. Green-apart-but-red-together is the failure a per-lane gate alone cannot see.
+  - name: Production deploy · DB migrations · secrets · releases
+    rung: boundary
+    subject: orchard-api
+    validation: Human executes. Automation may build and verify, never release.
+    note: Everything touching users or production stays here. A green gate earns a MERGE, never a release.
+
+  # --- Orchard Site — where the gate validates form, not truth ---
+  - name: Guide curation — gated curation against a written standard
+    rung: "1.5"
+    subject: orchard-site
+    validation: >
+      NO test can verify that a written claim is CORRECT — the build validates FORM (it renders),
+      never TRUTH — so the operator is the only competent check. One drafted pass → approval before
+      it lands. The standing quality control between reviews is a written curation standard in the
+      agent's charter (source tiers · cite the strongest source that actually supports the claim ·
+      correct in place · quarantine rather than delete · never cite from memory).
+    note: >
+      The rules exist because errors PROPAGATE — this content is read by people who then act on it.
+      Its mechanical counterpart (do the references resolve?) is rung 0 and deliberately carries no
+      judgment about whether the claim is right.
+
+  # --- Orchard Journal — the case with NO deterministic gate at all ---
+  - name: Drafting — brief to draft, human all the way down
+    rung: "1.5"
+    subject: orchard-journal
+    validation: >
+      There is NO test_cmd and NO gatekeeper, by design — writing quality is not objectively
+      checkable, so there is nothing for a hard gate to gate. The scoper turns a request into a
+      confirmable brief (read-only), the writer drafts against it, and the operator is the check at
+      both steps. One draft, human verdict, no autonomous iteration. The orchestrator is deliberately
+      thin here — there is no gate loop to run.
+    note: >
+      The teaching contrast to orchard-api. Same doctrine, opposite conclusion — when the validator
+      cannot be made deterministic, the answer is not a weaker automatic gate, it is a human one and
+      an honest rung. This is why the doctrine says engineer the VALIDATOR: where none exists,
+      autonomy is not available at any price, and a system that pretends otherwise is trading real
+      trust for the appearance of throughput.
+  - name: Publishing · outward-facing sends
+    rung: boundary
+    subject: orchard-journal
+    validation: Human executes. Publishing is never automated.
+
+  # NOTE — `orchard-ops` has NO entry, and that is correct rather than an omission: no agents.yaml,
+  # no test_cmd, and a plan that is almost entirely `type: manual`. There is nothing running to
+  # classify. An empty answer is a valid answer; padding the self-model to look complete would make
+  # it useless as a map of what actually runs.
+
+  # --- Almanac — where the model is allowed to be, and where it is not ---
+  - name: Forecast runtime — zero-LLM deterministic execution
+    rung: "0"
+    subject: almanac
+    validation: >
+      Pure deterministic Python; ONE shared code path for backtest and live, proven by
+      decision-parity (the same inputs produce the same outputs in both) plus per-module unit tests.
+    note: >
+      Teaching case — the engine runs zero LLM at runtime BY DECISION; AI is confined to development
+      and parameter search. A forecast a model invented at inference is neither reproducible nor
+      auditable, and "why did it say that?" has to have an answer that is not "it felt right".
+  - name: Evaluation gate — metric verdicts over a frozen split
+    rung: "0"
+    subject: almanac
+    validation: >
+      Deterministic metric gate over the frozen train/validation/holdout split — universal invariants
+      plus a sample-count sufficiency floor plus model-declared tolerance bands. The holdout is
+      one-shot, spend-once guarded.
+    note: >
+      The ruler is deterministic; the decision to ADVANCE a model on a verdict is human (see the
+      boundary entry below). A holdout you can re-run until it passes is not a holdout.
+  - name: Parameter search — LLM-in-the-loop optimizer
+    rung: "2"
+    subject: almanac
+    validation: >
+      The LLM edits ONLY the numeric parameter block and is scored by the deterministic anchored
+      walk-forward, with immutable hard floors it cannot touch; iteration-capped; the model STRUCTURE
+      is frozen; the holdout is never seen.
+    note: >
+      The canonical rung 2 outside the gate engine — the model iterates against a verifiable
+      validator it cannot see through, and a tuned config ships only if it beats the untuned default
+      out-of-sample. Everything that makes this safe is a constraint on what the model can reach.
+  - name: Promote a model to production · act on a forecast
+    rung: boundary
+    subject: almanac
+    validation: >
+      Human executes — the operator decides each stage advance on the gate verdict and spends the
+      one-shot holdout; automation only prepares (backtests, computes verdicts, drafts).
+    note: The backtest → shadow → production discipline (never skip a step) is human-gated at every boundary.

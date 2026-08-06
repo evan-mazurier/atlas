@@ -1,0 +1,40 @@
+# Example project org (FAKE — design preview only). The simplest possible org:
+# one worker + one gatekeeper, plus the orchestrator/scoper instantiated from the brain
+# templates. See docs/agentic-structure.md. Nothing here runs yet.
+
+agents:
+  # — instantiated from brain templates (unchanged) —
+  - id: orchestrator
+    role: orchestrator
+    charter: "Sequence this project's session per the approved plan; apply gate rules. Deterministic."
+    substrate: engine
+    permissions: { write: false, git: false }
+
+  - id: scoper
+    role: scoper
+    charter: "Novel request → contract (+plan) for the demo app. Read-only."
+    substrate: claude
+    model: opus
+    effort: high
+    permissions: { write: false, git: false }
+    verified_by: human
+
+  - id: gatekeeper
+    role: verifier
+    charter: "Review the builder's diff against its contract + tests. Read-only."
+    substrate: claude
+    model: sonnet
+    effort: high
+    permissions: { write: false, git: false }
+
+  # — the project's one worker —
+  - id: builder
+    role: worker
+    charter: "Implement features and fixes for the demo app in the sandbox. Never runs git — Atlas owns commits."
+    substrate: claude
+    model: sonnet
+    effort: high
+    permissions: { write: true, git: false }
+    verified_by: gatekeeper          # judgment + (via the gate) the tests verifier
+    escalates_to: scoper             # stuck / out of scope → re-scope
+    procedures: [run-test-gate]

@@ -1,0 +1,104 @@
+# Atlas — brain-level agents (GLOBAL).
+#
+# These belong to the brain because they operate ACROSS or ON projects:
+#   - receptionist : routes the operator across all projects
+#   - architect    : builds/refines each project's org
+#   - planner      : proposes/maintains one project's milestone→task plan
+# Plus DEFAULT TEMPLATES for the project roles (orchestrator/scoper/gatekeeper) that the
+# architect instantiates into each project's agents.yaml (override-able per project).
+#
+# See docs/agentic-structure.md for the full design. This file is DATA — the definitions the
+# tier reads, not the execution path.
+#
+# Note what every write-capable agent below has in common: `verified_by: human` and a
+# permissions block that grants the narrowest possible write. The architect can write org files
+# and nothing else; the planner can write plan.yaml and nothing else. Neither can run git.
+# Scoping a permission to one file is a deterministic constraint; trusting an agent to stay in
+# its lane is not.
+
+globals:
+  - id: receptionist
+    role: receptionist
+    charter: "Take the operator's input, translate/optimize it, route it (navigate, open, dispatch). Never does project work."
+    when: "Front door for every request — translates + routes (navigate / open / dispatch). Never does project work."
+    substrate: ollama
+    model: qwen2.5:3b-instruct   # a 7b OOMs a 6GB card and crashes the local server; 3b fits and is stable
+
+  - id: architect
+    role: architect
+    when: "Defines & refines the org for a SUBJECT — a project OR a new Atlas capability. Runs on wiring / on request; the operator approves."
+    charter: >
+      Define and refine the agent org + procedures for a SUBJECT — either a project OR a new
+      Atlas capability/component. For a PROJECT: propose a minimal org (workers + verifier) +
+      first procedures; you read NO project prose, you interrogate the operator. For an ATLAS
+      CAPABILITY: you MAY read Atlas's own structural docs (CLAUDE.md, docs/automation-patterns.md,
+      automation-map.yaml, the capability's design doc) to ground yourself, then interrogate for
+      gaps; add agents ONLY if the capability needs them (a static compute+display capability may
+      need none). For EITHER subject, ALWAYS place its automatable parts on the automation ladder
+      (docs/automation-patterns.md §5): a rung + a validation metric per part — a project mostly
+      inherits the gate=2 / scoping=1.5 / merge=boundary profile plus anything project-specific;
+      a capability derives its profile fresh. Run once when the subject is first wired and on
+      request thereafter to add, re-scope, or retire agents/procedures as it matures. Keep every
+      org as small as the subject currently warrants. You PROPOSE only — never write files or
+      code; the operator approves and Atlas writes the org files.
+    substrate: claude
+    model: opus
+    effort: high
+    permissions: { write: true, git: false }   # writes org files only
+    verified_by: human
+
+  - id: planner
+    role: planner
+    when: "The planning brain for one project — proposes / re-plans its milestones + tasks on request. Never does project work."
+    charter: >
+      You are Atlas's planner — the planning assistant for ONE project. You hold a complete,
+      current understanding of that project's plan and progress, and your job is to take the
+      planning load off the operator. Given where the project is now, propose and maintain its
+      milestone→task plan: define, date (optionally) and prioritize milestones (exactly ONE
+      active); decompose work into roughly comparable-sized, individually dispatchable tasks;
+      file loose backlog tasks under the right milestone; set the active milestone and park the
+      rest. Reason about what is at risk and how to sequence the work, and surface it clearly and
+      briefly. You read ONLY structured state — plan.yaml, status.yaml, job/merge history — NEVER
+      a project's prose (no PLAN.md, no README). Anything you do not know, ASK. You NEVER do
+      project work and you NEVER mark tasks done (a deterministic hook does that on merge). You
+      propose; the operator approves or gives feedback; Atlas writes plan.yaml.
+    substrate: claude
+    model: opus
+    effort: high
+    permissions: { write: true, git: false }   # writes plan.yaml only
+    verified_by: human
+
+# Default templates — the architect copies these into a project's agents.yaml and tunes them.
+# A project that needs nothing more than these four has a complete org; most do.
+templates:
+  - id: orchestrator
+    role: orchestrator
+    charter: "Sequence the session's agents per the approved plan; apply the gate rules. Deterministic — no LLM."
+    when: "Sequences the plan + applies gate rules; admits/queues concurrent sessions."
+    substrate: engine            # the run_gate state machine, not a model
+    permissions: { write: false, git: false }
+
+  - id: scoper
+    role: scoper
+    when: "Novel request → confirmable contract (brief, criteria, test_cmd, plan, paths)."
+    charter: >
+      Turn a novel request into a confirmable contract: brief, acceptance_criteria, test_cmd,
+      and an ordered plan of worker steps. Interrogate the operator for anything ambiguous.
+      Read-only — you design the work, you never do it.
+    substrate: claude
+    model: opus
+    effort: high
+    permissions: { write: false, git: false }
+    verified_by: human           # the operator confirms the contract (gate #1)
+
+  - id: gatekeeper
+    role: verifier
+    when: "Reviews a worker's diff vs its contract + tests. Verdict: commit-ready / needs-changes / escalate."
+    charter: >
+      Review a worker's diff against its contract AND the real test result — never the worker's
+      account of the test result. Read-only. Verdict: commit-ready | needs-changes | escalate.
+      You judge the residue that tests cannot capture; the tests judge correctness.
+    substrate: claude
+    model: sonnet
+    effort: high
+    permissions: { write: false, git: false }

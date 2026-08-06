@@ -1,0 +1,13 @@
+# Atlas runtime dependencies — deliberately two.
+#
+# The engine (dispatcher, worker, gate, planner, brain, scheduler, substrate) is stdlib-only:
+# subprocess, pathlib, json, datetime, threading, concurrent.futures, urllib. That is not an
+# accident. Every dependency is something that can break a gate run for a reason unrelated to
+# the code being gated, so the parts that decide whether work is trustworthy have none.
+#
+# The model layer needs no SDK either: local models are reached over plain HTTP and hosted ones
+# through their CLI, which is what makes swapping either a config change and not a code edit
+# (docs/model-agnosticism.md).
+
+pyyaml>=6.0      # the config plane — registry / schedule / agents / procedures / automation-map
+streamlit>=1.40  # dashboard/app.py only. The engine never imports it; the UI is optional.

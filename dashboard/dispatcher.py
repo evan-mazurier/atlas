@@ -20,7 +20,7 @@ import uuid
 import datetime as dt
 from pathlib import Path
 
-ATLAS_ROOT = Path(__file__).resolve().parent.parent      # D:\work\atlas  /  /mnt/d/AI/Atlas
+ATLAS_ROOT = Path(__file__).resolve().parent.parent      # D:\work\atlas  /  /mnt/d/work/atlas
 JOBS_DIR = ATLAS_ROOT / "jobs"
 REGISTRY = ATLAS_ROOT / "registry.yaml"
 SCHEDULE = ATLAS_ROOT / "schedule.yaml"                  # Atlas-owned global schedule (docs/scheduling.md)
@@ -1322,7 +1322,7 @@ def save_remainder(project_id: str, task_id: str, remaining: str = "", complete:
     return out
 
 
-# ═══ life-events — Part 2 (docs/scheduling-part2.md §8) ══════════════════════════════════════
+# ═══ life-events — Part 2 (docs/scheduling.md §12) ══════════════════════════════════════
 # The operator's own typed calendar items, captured from the desktop. Structured-splice writes: parse +
 # re-serialize ONLY the `events:` list, then splice it back in place of the old `events:` region —
 # every other section of schedule.yaml (header comments, availability, placements) is left
@@ -1377,7 +1377,7 @@ def _preserve_events_on_write(proposed_text: str) -> str:
     section the scheduling assistant emitted and re-inject the CURRENT on-disk events instead.
     The assistant proposes availability/placements only — life-events are the operator's, captured via
     save_event/delete_event, and must never be invented or clobbered by an approval
-    (docs/scheduling-part2.md §8)."""
+    (docs/scheduling.md §12)."""
     import yaml
     current_events = _load_events_list()          # reads the file as it stands BEFORE this write
     start, end = _events_region(proposed_text)
@@ -1387,7 +1387,7 @@ def _preserve_events_on_write(proposed_text: str) -> str:
 
 
 def _clean_event(event: dict) -> dict:
-    """Validate + allowlist one life-event's fields (docs/scheduling-part2.md §8). Raises
+    """Validate + allowlist one life-event's fields (docs/scheduling.md §12). Raises
     ValueError on invalid input (bad/missing title or day) so the endpoint can 400."""
     title = str(event.get("title") or "").strip()
     if not title:
@@ -1429,7 +1429,7 @@ def save_event(event: dict) -> dict:
 
     A busy, ALL-DAY event (no start/end) occupies the whole 06:00-23:00 day — landing it on a
     day that already has ANY busy item (a placement, a timed event, or another all-day event)
-    is REFUSED the same way (docs/scheduling-part2.md: all-day = hard block, not "day is free
+    is REFUSED the same way (docs/scheduling.md §12: all-day = hard block, not "day is free
     after hours")."""
     if not isinstance(event, dict):
         raise ValueError("event must be an object")
@@ -1476,7 +1476,7 @@ def move_event(event_id: str, day: str, start: str | None = None, end: str | Non
     that field as it was (e.g. dragging an all-day event to a new day). Collision-guarded when
     the event ends up busy + timed (against overlapping busy items on the target day), OR busy +
     all-day (against ANY busy item on the target day — an all-day event is a hard block on the
-    whole day, docs/scheduling-part2.md). A `busy: false` event can move freely.
+    whole day, docs/scheduling.md §12). A `busy: false` event can move freely.
 
     NOTE (recurring events): if the event has a `recur`, patching `day` shifts the whole series
     anchor — every occurrence moves with it. That's the accepted, predictable behavior here; this
@@ -1523,7 +1523,7 @@ def move_event(event_id: str, day: str, start: str | None = None, end: str | Non
 
 
 def override_occurrence(event_id: str, date: str, start: str, end: str) -> dict:
-    """Per-occurrence exception (docs/scheduling-part2.md §8b): retime a SINGLE occurrence of a
+    """Per-occurrence exception (docs/scheduling.md §12): retime a SINGLE occurrence of a
     recurring life-event, leaving the rest of the series untouched. Writes
     `overrides: {date: {start, end}}` on the event (schedmath/control center-state both honor it — the
     retimed date renders/collides at the NEW times, every other date keeps the series' base
@@ -1568,7 +1568,7 @@ def override_occurrence(event_id: str, date: str, start: str, end: str) -> dict:
 
 
 def skip_occurrence(event_id: str, date: str) -> dict:
-    """Per-occurrence exception (docs/scheduling-part2.md §8b): delete a SINGLE occurrence of a
+    """Per-occurrence exception (docs/scheduling.md §12): delete a SINGLE occurrence of a
     recurring life-event, leaving the rest of the series untouched. Appends `date` to the event's
     `skips` list (deduped) and clears any existing `overrides[date]` (a skipped occurrence has no
     timing to retime). Raises ValueError (and writes nothing) if the event id is unknown, isn't

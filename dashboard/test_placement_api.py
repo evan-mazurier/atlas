@@ -199,7 +199,7 @@ class MoveEvent(PlacementApiTestCase):
 class SaveEventAllDayHardBlock(PlacementApiTestCase):
     """An all-day busy event occupies the WHOLE day (06:00-23:00): saving/moving one onto a day
     that already has ANY busy item — a placement, a timed event, or another all-day event — is
-    refused, same as any other collision (docs/scheduling-part2.md)."""
+    refused, same as any other collision (docs/scheduling.md §12)."""
 
     def test_all_day_event_blocked_by_existing_placement(self):
         # a fresh day with only a placement, nothing else

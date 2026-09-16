@@ -296,9 +296,9 @@ check that the soak actually changes that work's risk; here, only graduation qua
 - **Staleness.** `reviewed` + `confidence` drive a periodic re-confirm pass: old, low-confidence
   beliefs get surfaced to the operator rather than quietly steering agents forever. People change; a
   personal model that only accumulates is wrong by construction.
-- **Never leaves the machine.** No cloud sync, no telemetry, no external embedding API. When the
-  phone slice (`scheduling-part2.md`) lands, the Brain travels over the Tailscale mesh as files —
-  the same transport as everything else, still on the operator's own hardware.
+- **Never leaves the machine.** No cloud sync, no telemetry, no external embedding API. When a
+  second device is added, the Brain travels over a private mesh as files — the same transport as
+  everything else, still on the operator's own hardware.
 - **Informs suggestions, never ungated irreversible actions** — the standing Atlas guardrail.
 
 ---

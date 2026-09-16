@@ -8,7 +8,7 @@ result, and then waits. It does not merge. It does not publish. It does not send
 
 I run it every day.
 
-**12,920 lines of Python · 507 tests · 1,972 lines of design records**
+**14,145 lines of Python · 555 tests · 1,947 lines of design records**
 
 ---
 
@@ -123,8 +123,41 @@ The test suite for the engine itself is real and reproducible:
 
 ```
 $ py -3.12 -m pytest -q
-507 passed in 70.01s
+555 passed in 92.50s
 ```
+
+---
+
+## Measuring the gate itself
+
+A gate you cannot measure is a gate you end up trusting on feel. So the engine writes one
+append-only file, `ledger/events.jsonl` — one line per thing that happened: a state change, a test
+run, a reviewer verdict, an escalation and **who answered it**, a merge, a revert, and the token
+figures of every phase. Nothing is edited, pruned or summarised in place.
+
+Three rules, each a property of the code rather than a habit:
+
+- **Events only, statistics derived.** Nothing computed is ever stored. A formula found to be wrong
+  is fixed once and corrects every past week; a metric nobody has thought of yet is answerable from
+  July's data in December.
+- **No efficiency figure without the quality figures beside it.** The token block cannot be built
+  unless rework rate, reviewer rejection rate and revert count come with it. Tokens can always be
+  driven down by doing worse work, and a chart that let you forget that would be worse than no chart.
+- **The public export cannot leak.** The ledger holds task text and reviewer notes about real client
+  work. The export path emits numbers only, with projects aliased by ordinal, and a recursive check
+  asserts that every leaf is a number before anything is returned. A test poisons every text field
+  and proves none of it can come out.
+
+The number the ledger exists to move is **hours the machine spent blocked waiting on a human**. The
+comparison that licenses more autonomy is read from it directly: revert rate on work a human approved
+against revert rate on work that went through ungated. If the second is no worse than the first, the
+approval was buying time, not safety — and the ungated category widens on evidence rather than nerve.
+
+At the time of this snapshot (September 2026) a monitor is answering escalations in **shadow mode**:
+it writes its would-be decision beside every human one and merges nothing. At the end of that week
+the ledger says how often the two agreed, and that count — not confidence — decides whether it gets
+a real decision. The design
+is [`docs/ledger.md`](docs/ledger.md); the code is `dashboard/ledger.py`.
 
 ---
 
@@ -156,6 +189,8 @@ cannot be gated, so it gets a human and an honest rung rather than a gate that o
 | [`automation-map.yaml`](automation-map.yaml) | The self-model — every capability, its rung, its validator |
 | `dashboard/worker.py` | The gate engine and the multi-worker scheduler |
 | `dashboard/dispatcher.py` | Job lifecycle, contracts, planner and schedule writes |
+| `dashboard/ledger.py` · `ledger_report.py` | The append-only event ledger, its derived statistics, and the numbers-only public export |
+| [`docs/ledger.md`](docs/ledger.md) | Why the ledger records what it records, and what each statistic is for |
 | `dashboard/brain.py` · `brainkeeper.py` | The memory layer — a markdown vault only *code* may write to |
 | `dashboard/schedmath.py` | The deterministic collision guard every schedule write path consults |
 | `dashboard/vault.py` | The deterministic vault-lint that gates the one write-authorized agent |
@@ -180,6 +215,11 @@ deliberately left out:
   badge; that consumer simply is not here.
 - **The real project registry and its vault.** Replaced by the worked example above.
 
+The engine here is the August 2026 extraction. One piece was lifted from the current tree in
+September because it stands alone: the ledger (`ledger.py`, `ledger_report.py`, their tests and
+design record). The worker in this snapshot predates it and does not yet write to it; the monitor that
+reads it is still being measured and is not here at all.
+
 The engine is complete and the tests run. Nothing was removed to make the numbers look better.
 
 ---
@@ -188,7 +228,7 @@ The engine is complete and the tests run. Nothing was removed to make the number
 
 ```bash
 pip install -r requirements.txt
-py -3.12 -m pytest dashboard -q     # 507 tests, ~70s, no network, no keys
+py -3.12 -m pytest dashboard -q     # 555 tests, ~90s, no network, no keys
 ```
 
 The engine itself is **stdlib-only** — `subprocess`, `pathlib`, `json`, `datetime`, `threading`,

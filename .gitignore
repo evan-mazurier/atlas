@@ -2,6 +2,7 @@
 logs/
 jobs/
 worktrees/
+ledger/
 
 # ---- Never commit a key, wherever it lands ----
 *.pem

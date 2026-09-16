@@ -1,5 +1,5 @@
-"""Unit tests for per-occurrence editing of recurring life-events (docs/scheduling-part2.md
-§8b): a single `overrides`/`skips` exception on a recurring event, without touching the rest
+"""Unit tests for per-occurrence editing of recurring life-events (docs/scheduling.md
+§12): a single `overrides`/`skips` exception on a recurring event, without touching the rest
 of the series. Covers all three layers that must agree:
 
   - dashboard/dispatcher.py: override_occurrence / skip_occurrence (the writers)

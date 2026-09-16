@@ -34,7 +34,7 @@ schedule the work *around real availability*.
 
 We considered connecting the Google Calendar API instead. **Rejected — native-first.** The value
 The operator wants is a *scheduling assistant* that reasons about his work, estimates effort, and advises
-*where* to put a task around his availability — something Google structurally cannot do (it has no
+*where* to put a task around the operator's availability — something Google structurally cannot do (it has no
 model of the projects, the work, or the effort). Google-first would have propped up the weaker tool
 en route to building the stronger one, and its one real benefit — capturing availability on the go
 from a phone — is exactly what Part 2's phone surface supersedes. So we skip the throwaway adapter.
@@ -280,22 +280,20 @@ was always part of the control center.
 
 ---
 
-## 12. Part 2 — the final milestone (✅ SCOPED 2026-07-19 → `scheduling-part2.md`)
+## 12. Part 2 — the final milestone (scoped 2026-07-19)
 
-**Design of record: `docs/scheduling-part2.md`** (scoped with the operator 2026-07-19). The one-line vision:
+The one-line vision:
 
-> **Atlas everywhere, beyond the work plane.** Reach the **desktop** (the sovereign compute core, asleep by
-> default + woken via Wake-on-LAN) from a **laptop** (full remote-desktop, borrowing its power) and a
-> **phone** (an installable PWA — read + capture life-events), all over a **Tailscale mesh** — and model
-> **personal / life events as first-class typed items** (appointments, errands, protected free time,
-> with recurrence), superseding Part 1's type-less blocks. **Clean cutover replaces Google Calendar
-> entirely.**
+> **Atlas everywhere, beyond the work plane.** Reach the single desktop instance from other devices
+> over a private mesh, and model **personal / life events as first-class typed items** (appointments,
+> errands, protected free time, with recurrence), superseding Part 1's type-less blocks. **Clean
+> cutover replaces the external calendar entirely.**
 
 The reframe that scoping produced: it is **not** "run Atlas on a VPS" (rejected) — it is **remote
 access to the single always-on-capable desktop instance** over a mesh VPN, which is maximally
-north-star (no third party ever runs the workload). One decision — the always-on WoL **relay** — is
-deferred to on-site testing at the destination; everything else is location-independent. See the doc for the
-full model, the `events:` schema, and the staged build order.
+north-star (no third party ever runs the workload). The `events:` schema and the per-occurrence
+exception model (`overrides` / `skips` on a recurring event) are the parts that landed in the engine;
+the device-and-network side of the design is about the operator's own hardware and is kept private.
 
 ## 13. Parked (recorded so nothing is lost)
 

@@ -408,7 +408,7 @@ To shape + verify the UI before the agent exists, we seed **lots of simulated mi
 
 The left frame (Today + momentum strips) is the first populated piece of the **framed control center** (canvas confined to
 a center box, surrounded by fixed frames). That confinement needs the camera-math refactor (window-based →
-bounded-rect) and is its own later task; see `SESSION_HANDOFF.md`. The strips overlay the canvas edge until then.
+bounded-rect) and is its own later task; tracked in the private handoff. The strips overlay the canvas edge until then.
 
 ---
 

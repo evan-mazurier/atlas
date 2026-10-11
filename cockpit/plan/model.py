@@ -215,6 +215,14 @@ def _registry_plan_files() -> dict:
     return val
 
 
+def registry_plan_tasks():
+    """Yield `(project_id, task)` for every task, done ones included, in each registry project's plan.yaml.
+    Public reader for other plan modules (uses the cached private readers)."""
+    for pid, pfile in _registry_plan_files().items():
+        for t in _read_plan_yaml(Path(pfile)):
+            yield pid, t
+
+
 def plan_yaml_tasks(areas: list[dict]) -> dict:
     """area id -> read-only rows from each registry project's plan.yaml whose project maps to an area.
     Done tasks are left out. Row id = `<project>/<task id>` (unique next to tasks.yaml ids)."""

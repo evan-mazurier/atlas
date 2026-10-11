@@ -4,7 +4,7 @@
 
 Once a day (Windows Task Scheduler task AtlasLedgerAnchor), the hash of the last newline-terminated line of each day
 file (flagged "head" while the day is still open) is appended to <clone>/anchors.jsonl, committed and pushed to the
-pinned remote in anchor.json (url, branch, clone), by `git push <url> HEAD:<branch>`. The remote is a private GitHub
+pinned remote in anchor.json (url, branch, clone), by `git push <url> HEAD:<branch>`. The remote is a public GitHub
 repo whose branch ruleset blocks force pushes and deletions.
 
 Entry: {"day", "lines", "last_hash", "anchored_at"} (+ "head": true while the day is open). The ledger is read; the

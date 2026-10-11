@@ -2,6 +2,7 @@
    plain-language report. Pure string building (no DOM) so node can test it; every dynamic value goes through esc().
    The facts are computed by code from the ledger; notes are an account, shown muted below the facts. */
 import { dayLabel, esc, isoToHM } from "../kit/format.js";
+import { displayPath } from "./ledger-model.js";
 
 const LEVEL_WORD = { alert: "Alert", warn: "Warning", info: "Info" };
 
@@ -30,7 +31,7 @@ export function bypassRowHTML(r, open) {
   const rep = r.report || null;
   const key = String(r.key || r.t || "");
   const level = rep && LEVEL_WORD[rep.level] ? rep.level : "info";
-  const head = dayLabel(String(r.t).slice(0, 10)) + " " + (isoToHM(r.t) || "") + "  " + r.tool + "  " + (r.matched || "") + (r.denied ? "  refused" : "  allowed");
+  const head = dayLabel(String(r.t).slice(0, 10)) + " " + (isoToHM(r.t) || "") + "  " + r.tool + "  " + displayPath(r.matched) + (r.denied ? "  refused" : "  allowed");
   const id = "bp-" + key.replace(/[^A-Za-z0-9_-]/g, "_");
   let body = "";
   if (rep) {

@@ -1,6 +1,6 @@
-# Registers the daily ledger anchor as a Windows scheduled task "AtlasLedgerAnchor" (23:55 every day).
+# Registers the daily ledger anchor as a Windows scheduled task "AtlasLedgerAnchor" (21:00 every day).
 # It runs tools\anchor_ledger.py, which appends the hash of the last line of each ledger day file to the
-# private anchor repo (the clone named in anchor.json, or ATLAS_ANCHOR_REPO), commits and pushes. See docs\v2\anchor-setup.md.
+# public anchor repo (the clone named in anchor.json, or ATLAS_ANCHOR_REPO), commits and pushes. See docs\v2\anchor-setup.md.
 # Run this ONLY after the anchor repo exists and is cloned.
 #
 #   Usage:  powershell -ExecutionPolicy Bypass -File tools\install_anchor_task.ps1
@@ -13,7 +13,7 @@ $repo     = Split-Path -Parent $PSScriptRoot
 $script   = Join-Path $repo 'tools\anchor_ledger.py'
 
 $action = New-ScheduledTaskAction -Execute 'py.exe' -Argument "-3.12 `"$script`"" -WorkingDirectory $repo
-$trigger = New-ScheduledTaskTrigger -Daily -At '23:55'
+$trigger = New-ScheduledTaskTrigger -Daily -At '21:00'
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
@@ -23,6 +23,6 @@ $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interac
 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force `
-    -Description 'Atlas ledger outside anchor: appends the day-file last-line hashes to the private anchor repo and pushes.' | Out-Null
+    -Description 'Atlas ledger outside anchor: appends the day-file last-line hashes to the public anchor repo and pushes.' | Out-Null
 
-Write-Host "[AtlasLedgerAnchor] registered (daily 23:55, current user, only when logged on)."
+Write-Host "[AtlasLedgerAnchor] registered (daily 21:00, current user, only when logged on)."

@@ -20,7 +20,7 @@ export default {
     wrap.className = "screen-in team-in";
     wrap.innerHTML = `
       <div class="ph"><div class="eyebrow">Team</div><h1>Claude Code team</h1>
-        <p class="lede">Live view of Claude Code desktop sessions. Atlas's own dispatches are not shown here.</p></div>
+        <p class="lede">Live view of Claude Code desktop sessions and their helpers.</p></div>
       <div class="team-err" id="team-err" hidden></div>
       <div class="team-strip" id="team-strip"></div>
       <div id="team-roster"></div>

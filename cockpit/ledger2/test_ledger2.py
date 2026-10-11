@@ -163,7 +163,7 @@ def test_derive_expected_task_record():
     assert t1["crew"] == ["implementer", "reviewer", "senior-reviewer"]
     assert t1["helpers"][0] == {"helper": "implementer", "count": 2, "labels": ["Build ledger store", "Fix findings"]}
     # reviewer + senior-reviewer failing the SAME version burn one round; the duplicate agent verdict is dropped
-    assert t1["rounds"] == {"needs_changes": 1, "budget": 2, "granted": 0, "left": 1}
+    assert t1["rounds"] == {"needs_changes": 1, "budget": 2, "granted": 0, "left": 1, "own": 1, "carried": 0}
     assert [(v["helper"], v["verdict"], v["version"]) for v in t1["verdicts"]] == [
         ("reviewer", "NEEDS_CHANGES", 2), ("senior-reviewer", "NEEDS_CHANGES", 2), ("reviewer", "READY", 3)]
     assert t1["final_verdict"] == "READY" and t1["checked"] is True and t1["unverified_flag"] is False
@@ -200,12 +200,12 @@ def test_derive_switch_carries_spent_budget_as_min():
             E("rework_granted", 21, task="abcd1234-2", n=1)]
     t1, t2 = derive.derive_v2(evs, wf())
     assert t1["status"] == "switched" and t1["rounds"]["left"] == 0
-    assert t2["rounds"] == {"needs_changes": 2, "budget": 1, "granted": 1, "left": 0}   # min(2, 1) budget, granted 0+1
+    assert t2["rounds"] == {"needs_changes": 2, "budget": 1, "granted": 1, "left": 0, "own": 0, "carried": 2}   # min(2, 1) budget, granted 0+1
 
 
 def test_derive_switch_without_spent_budget_resets():
     evs = [E("work_type", 1, type="coding", task="abcd1234-1"), E("work_type", 2, type="chore", task="abcd1234-2")]
-    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 0, "budget": 1, "granted": 0, "left": 1}
+    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 0, "budget": 1, "granted": 0, "left": 1, "own": 0, "carried": 0}
 
 
 def test_derive_chained_redeclarations_keep_the_spent_rounds():
@@ -272,6 +272,25 @@ def test_derive_edits_after_ready_make_an_over_budget_task_unresolved_again():
     evs2 = evs[:5] + [E("edit", 6, task="abcd1234-1", path="p", tool="Edit", version=3),
                       E("work_type", 7, type="writing", task="abcd1234-2")]
     assert derive.derive_v2(evs2, wf())[1]["rounds"]["needs_changes"] == 1
+
+
+def test_derive_resumed_reviewer_second_verdict_counts_and_resolves():
+    t = "abcd1234-1"
+    evs = [E("work_type", 1, type="chore", task=t),
+           E("helper_start", 2, task=t, tuid="t1", helper="reviewer", label="r", bg=False, version=0),
+           E("helper_paired", 2, task=t, agent_id="A1", helper="reviewer", tuid="t1"),
+           _verdict(3, t, "A1", "NEEDS_CHANGES", 0),
+           E("helper_end", 3, task=t, agent_id="A1", helper="reviewer", status="completed"),
+           E("helper_resume", 4, task=t, agent_id="A1", helper="reviewer"),
+           E("helper_paired", 4, task=t, agent_id="A1", helper="reviewer", tuid=None),
+           _verdict(5, t, "A1", "READY", 0),
+           E("work_type", 70, type="chore", task="abcd1234-2")]
+    ts = derive.derive_v2(evs, wf())
+    assert ts[0]["final_verdict"] == "READY" and ts[0]["rounds"]["own"] == 1 and len(ts[0]["verdicts"]) == 2
+    assert ts[1]["rounds"]["needs_changes"] == 0       # resolved: the hook's recorded decision is not overridden
+    # without the resume the second verdict is a duplicate and is dropped
+    ts2 = derive.derive_v2([e for e in evs if e["ev"] != "helper_resume" and e.get("tuid", 1) is not None], wf())
+    assert len(ts2[0]["verdicts"]) == 1
 
 
 def test_tasks_payload_has_plan_title_on_every_task():
@@ -470,7 +489,7 @@ def test_derive_carried_rounds_add_to_new_task_versions():
            E("work_type", 6, type="chore", task="abcd1234-2", carried=True),
            E("edit", 7, task="abcd1234-2", path="p", tool="Edit", version=1),
            E("verdict", 8, task="abcd1234-2", agent_id="C", helper="reviewer", verdict="NEEDS_CHANGES", version=1, findings=1)]
-    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 3, "budget": 1, "granted": 0, "left": 0}
+    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 3, "budget": 1, "granted": 0, "left": 0, "own": 1, "carried": 2}
 
 
 def test_derive_unknown_verdict_version_never_checks():
@@ -576,3 +595,46 @@ def test_derive_task_that_ended_ready_does_not_carry_even_when_spent():
             E("verdict", 10, task="abcd1234-1", agent_id="R9", helper="reviewer", verdict="READY", version=3, findings=0),
             E("work_type", 20, type="coding", task="abcd1234-2")]
     assert derive.derive_v2(evs, wf())[1]["rounds"]["needs_changes"] == 0
+
+
+def test_task_title_falls_back_goal_then_first_helper_label_then_session_title():
+    tasks = derive.derive_v2(stream(), wf(), markers=set())
+    assert tasks[0]["title"] == "Ledger store"                       # summary goal wins
+    no_goal = [e for e in stream() if e["ev"] != "summary"]
+    assert derive.derive_v2(no_goal, wf())[0]["title"] == "Build ledger store"   # first helper label
+    bare = [E("session_start", 0, source="startup"), E("work_type", 1, type="chore", task="x-1"),
+            E("cost", 2, scope="main", model="claude-opus-5-5", weighted=1, title="Sidebar name")]
+    assert derive.derive_v2(bare, wf())[0]["title"] == "Sidebar name"             # session title
+    assert derive.derive_v2([E("work_type", 1, type="chore", task="x-1")], wf())[0]["title"] is None
+
+
+def test_plan_title_beats_every_other_title(monkeypatch):
+    out = api.with_plan_titles([{"id": "a", "title": "Own", "plan_ref": None}])
+    assert out[0]["title"] == "Own" and out[0]["plan_title"] is None
+    import types, sys
+    fake = types.SimpleNamespace(resolve_many=lambda refs: {"evt_1": {"title": "Plan item"}})
+    monkeypatch.setitem(sys.modules, "plan", types.SimpleNamespace(refs=fake))
+    monkeypatch.setitem(sys.modules, "plan.refs", fake)
+    out = api.with_plan_titles([{"id": "a", "title": "Own", "plan_ref": "evt_1"}])
+    assert out[0]["title"] == "Plan item" and out[0]["plan_title"] == "Plan item"
+
+
+def test_rounds_expose_own_and_carried_next_to_granted():
+    evs = [E("work_type", 1, type="coding", task="abcd1234-1"),
+           E("edit", 2, task="abcd1234-1", path="p", tool="Edit", version=1),
+           E("verdict", 3, task="abcd1234-1", agent_id="A", helper="reviewer", verdict="NEEDS_CHANGES", version=1, findings=1),
+           E("edit", 4, task="abcd1234-1", path="p", tool="Edit", version=2),
+           E("verdict", 5, task="abcd1234-1", agent_id="B", helper="reviewer", verdict="NEEDS_CHANGES", version=2, findings=1),
+           E("work_type", 6, type="chore", task="abcd1234-2", carried=True),
+           E("rework_granted", 7, task="abcd1234-2", n=1)]
+    r = derive.derive_v2(evs, wf())[1]["rounds"]
+    assert r["own"] == 0 and r["carried"] == 2 and r["granted"] == 1 and r["needs_changes"] == 2
+
+
+def test_derive_v1_job_without_a_finish_is_ended_at_its_last_event():
+    ev = lambda **k: dict({"v": 1, "src": "v1", "project": "learning-app"}, **k)
+    v1 = [ev(t="2026-09-01T10:00:00", ev="started", job="job_2", model="opus"),
+          ev(t="2026-09-01T10:10:00", ev="phase_tokens", job="job_2", phase="s1 CODE", fresh=10)]
+    t = derive.derive_v1(v1, areas.load_areas(str(AREAS_FIXTURE)), wf())[0]
+    assert t["status"] == "ended" and t["ended"] == "2026-09-01T10:10:00" and t["duration_s"] == 600
+    assert t["rounds"]["own"] == 0 and t["rounds"]["carried"] == 0

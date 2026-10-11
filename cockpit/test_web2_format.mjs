@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  assignLanes, compact, delta, dayLabel, dayTitle, duration, esc, fmtT, helperName, helperTier, hm, isoWeek, niceTicks, tickDecimals, shiftWeek, tokens, weekStart,
+  assignLanes, compact, delta, dayLabel, dayTitle, duration, esc, fmtT, helperTier, hm, isoWeek, niceTicks, tickDecimals, shiftWeek, tokens, weekStart,
 } from "./web2/kit/format.js";
 
 test("fmtT and hm round-trip", () => {
@@ -69,8 +69,6 @@ test("delta tones follow the good direction", () => {
 });
 
 test("names, escaping, dates", () => {
-  assert.equal(helperName("implementer"), "Builder");
-  assert.equal(helperName("zzz"), "zzz");
   assert.equal(helperTier("chief"), "opus");
   assert.equal(helperTier("reviewer"), "sonnet");
   assert.equal(helperTier("scout"), "haiku");

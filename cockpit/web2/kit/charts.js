@@ -296,7 +296,10 @@ export function spark(host, vals) {
 export function table(host, heads, rows) {
   const t = H("table", "tbl", null, host);
   const tr = H("tr", null, null, H("thead", null, null, t));
-  heads.forEach((hd) => H("th", hd.num ? "num" : null, hd.t, tr));
+  heads.forEach((hd) => {
+    const th = H("th", hd.num ? "num" : null, hd.t, tr);
+    if (hd.tip) { th.dataset.tip = "1"; bindTip(th, () => ({ title: hd.t, rows: [{ val: hd.tip, wrap: true }] })); }
+  });
   const tb = H("tbody", null, null, t);
   rows.forEach((r) => {
     const row = H("tr", null, null, tb);

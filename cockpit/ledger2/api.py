@@ -64,8 +64,11 @@ def with_plan_titles(tasks: list[dict]) -> list[dict]:
         found = plan_refs.resolve_many(refs)
     except Exception:  # noqa: BLE001
         found = {}
-    return [dict(t, plan_title=(found.get(t["plan_ref"]) or {}).get("title") if t.get("plan_ref") else None)
-            for t in tasks]
+    out = []
+    for t in tasks:
+        pt = (found.get(t["plan_ref"]) or {}).get("title") if t.get("plan_ref") else None
+        out.append(dict(t, plan_title=pt, title=pt or t.get("title")))
+    return out
 
 
 def get(path: str, query_: dict | None = None):

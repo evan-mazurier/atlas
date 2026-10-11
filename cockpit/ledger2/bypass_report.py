@@ -19,8 +19,8 @@ NOT_RECORDED = "Not recorded."
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 CREATURES = {
-    "implementer": "Builder", "test-runner": "Lab Tech", "reviewer": "Inspector", "senior-reviewer": "Senior Partner",
-    "scout": "Scout", "sweeper": "Clerk", "researcher": "Analyst", "drafter": "Writer",
+    "implementer": "implementer", "test-runner": "test-runner", "reviewer": "reviewer", "senior-reviewer": "senior-reviewer",
+    "scout": "scout", "sweeper": "sweeper", "researcher": "researcher", "drafter": "drafter",
 }
 
 ATTEMPT_KEYS = ("actor", "desc", "target", "effect")
@@ -36,7 +36,7 @@ def actor_words(e: dict) -> str:
         return "An unknown agent"
     a = str(a).lower()
     if a == "main":
-        return "The Chief"
+        return "The orchestrator"
     if a == "unknown":
         return "An unknown agent"
     if a in CREATURES:
@@ -170,7 +170,7 @@ def _after(e: dict, later: list[dict]) -> str:
         out.append(f"Tried again {again} more time{'s' if again != 1 else ''}.")
     aid = e.get("agent_id")
     if aid and any(x.get("ev") == "helper_end" and x.get("agent_id") == aid for x in win):
-        out.append("Then handed back to the Chief.")
+        out.append("Then handed back to the orchestrator.")
     verdicts = [x for x in win if x.get("ev") == "verdict"]
     if verdicts:
         v = str(verdicts[0].get("verdict") or "").replace("_", " ")
@@ -248,5 +248,5 @@ def build_report(e: dict, session_events: list[dict], index: int, wf: dict, note
         "reading": reading,
         "level": level,
         "notes": note_list,
-        "actor_is_main": actor_words(e) == "The Chief",
+        "actor_is_main": actor_words(e) == "The orchestrator",
     }

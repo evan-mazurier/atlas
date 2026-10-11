@@ -1,3 +1,4 @@
+import { rosterName } from "../kit/format.js";
 /* Team creatures: shapes, gradients, motion phase. Copied from cockpit/web/team.html (docs/v2/contracts.md §4, §8.4).
    The operator's "kept exactly" wins: the code between the markers is verbatim, hex literals included. */
 /* creatures: verbatim from v1 */
@@ -43,5 +44,9 @@ function human(){
 }
 const art = (id, key) => id === "op" ? human() : (SHAPE[id] ? creature(id, key) : "");
 /* end creatures */
+
+// One name per helper: the roster name (kit/format.js). The creature keys above stay as artwork keys only.
+const ROSTER_KEY = { chief: "chief", scout: "scout", clerk: "sweeper", analyst: "researcher", builder: "implementer", writer: "drafter", labtech: "test-runner", inspector: "reviewer", partner: "senior-reviewer" };
+for (const k in ROSTER_KEY) T[k].name = rosterName(ROSTER_KEY[k]);
 
 export { T, G, SHAPE, ORDER, art, creature, human, hash };

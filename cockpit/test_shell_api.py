@@ -1,4 +1,4 @@
-"""cockpit/shell_api.py (areas, attention, team, roster) and cockpit/core/usage.window_by_model()
+"""cockpit/shell_api.py (areas, attention, team, roster)
 (docs/v2/contracts.md §5.1).
 
 Run:  py -3.12 -m pytest -q cockpit/test_shell_api.py
@@ -20,7 +20,6 @@ for p in (HERE, HERE / "core"):
         sys.path.insert(0, str(p))
 
 import shell_api  # noqa: E402
-import usage  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -28,10 +27,7 @@ def _isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("ATLAS_AREAS_FILE", str(ROOT / "cockpit" / "ledger2" / "fixtures" / "areas.yaml"))
     monkeypatch.setenv("ATLAS_CLAUDE_DIR", str(tmp_path / "claude-projects"))
     monkeypatch.setenv("ATLAS_TEAM_DOC", str(tmp_path / "no-team-doc.md"))
-    monkeypatch.setattr(usage, "WINDOW_PIN", tmp_path / "no-pin.json")
-    usage._WINDOW_CACHE.update({"at": None, "hours": None, "value": None})
     yield
-    usage._WINDOW_CACHE.update({"at": None, "hours": None, "value": None})
 
 
 SNAP = {"ok": True, "now": "2026-10-09T12:00:00", "working": 1, "counts": {}, "active": 0, "cost": 0,
@@ -123,7 +119,7 @@ def test_session_with_a_live_background_helper_counts_as_working_not_waiting(mon
     d = shell_api.get("/api/v2/attention", {})[1]
     assert (d["working"], d["waiting"]) == (1, 0) and d["sessions"][0]["status"] == "working"
     t = shell_api.get("/api/v2/team", {})[1]["sessions"][0]
-    assert t["via_helpers"] is True and t["live_helpers"][0]["name"] == "Builder"
+    assert t["via_helpers"] is True and t["live_helpers"][0]["name"] == "implementer"
     mt["h1"] = now - dt.timedelta(minutes=10)                # the helper stopped writing: back to waiting
     snap2 = teamlive.build_state(evs, now, (), None, None, lambda sid, tr, aid: mt.get(aid))
     monkeypatch.setattr(shell_api, "_snapshot", lambda: snap2)
@@ -172,61 +168,6 @@ def test_team_payload_error_is_a_500(monkeypatch):
     monkeypatch.setattr(shell_api, "_snapshot", lambda: {"ok": False, "error": "boom"})
     code, d = shell_api.get("/api/v2/team", {})
     assert code == 500 and d == {"ok": False, "error": "boom"}
-
-
-# --- the usage window ----------------------------------------------------------------------------------
-def line(ts, mid, rid, model, i, o, cr=0, cc=0, sidechain=False):
-    rec = {"timestamp": ts.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z"), "requestId": rid,
-           "message": {"id": mid, "model": model, "usage": {"input_tokens": i, "output_tokens": o,
-                                                           "cache_read_input_tokens": cr, "cache_creation_input_tokens": cc}}}
-    if sidechain:
-        rec["isSidechain"] = True
-    return json.dumps(rec)
-
-
-def write_transcript(tmp_path, lines, name="s1.jsonl", sub=None):
-    d = tmp_path / "claude-projects" / "proj"
-    if sub:
-        d = d / sub
-    d.mkdir(parents=True, exist_ok=True)
-    (d / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def test_window_by_model_counts_a_message_once_and_weights_per_model(tmp_path):
-    now = dt.datetime.now().replace(microsecond=0)
-    t = now - dt.timedelta(minutes=30)
-    lines = [
-        # one Opus message written as 3 lines (3 content blocks), usage repeated: counts once, max of each field
-        line(t, "m1", "r1", "claude-opus-5-5", 100, 10), line(t, "m1", "r1", "claude-opus-5-5", 100, 400),
-        line(t, "m1", "r1", "claude-opus-5-5", 100, 1000),
-        line(t, "m2", "r2", "claude-sonnet-5-5", 200, 800),
-        line(t, "m3", "r3", "claude-haiku-5-5", 1000, 3000),
-        line(t, "m4", "r4", "claude-opus-5-5", 5, 5, sidechain=True),      # main-transcript sidechain: skipped
-    ]
-    write_transcript(tmp_path, lines)
-    w = usage.window_by_model(now=now)
-    assert w["ok"] and w["window_start"]
-    # opus (100+1000) x 2.0, sonnet (200+800) x 1.0, haiku-5 (1000+3000) x 0.05
-    assert w["by_model"] == {"opus": 2200, "sonnet": 1000, "haiku": 200}
-    assert w["total"] == 3400
-
-
-def test_window_by_model_dedupes_across_files_and_reads_subagents(tmp_path):
-    now = dt.datetime.now().replace(microsecond=0)
-    t = now - dt.timedelta(minutes=10)
-    write_transcript(tmp_path, [line(t, "m1", "r1", "claude-sonnet-5-5", 10, 90)], "a.jsonl")
-    write_transcript(tmp_path, [line(t, "m1", "r1", "claude-sonnet-5-5", 10, 90)], "b.jsonl")          # same message elsewhere
-    write_transcript(tmp_path, [line(t, "h1", "hr1", "claude-sonnet-5-5", 0, 50, sidechain=True)], "agent-x.jsonl", sub="subagents")
-    w = usage.window_by_model(now=now)
-    assert w["by_model"]["sonnet"] == 100 + 50
-
-
-def test_window_by_model_with_no_open_window(tmp_path):
-    now = dt.datetime.now().replace(microsecond=0)
-    old = now - dt.timedelta(hours=8)
-    write_transcript(tmp_path, [line(old, "m1", "r1", "claude-opus-5-5", 10, 90)])
-    w = usage.window_by_model(now=now)
-    assert w["ok"] and w["total"] == 0 and w["window_start"] is None
 
 
 def test_attention_reports_a_team_log_error(monkeypatch):

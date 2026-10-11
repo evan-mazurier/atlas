@@ -17,9 +17,21 @@ standard-library Python plus plain HTML, CSS and JavaScript (no build step). The
 | Team | `t` | Live sessions and their helpers, a timeline of the day, the roster of named helpers and what each may not do. |
 | Ledger | `l` | Tasks, review rounds, first-pass rate, usage by model and helper, ledger integrity and bypass attempts. |
 
-![Team: live sessions and the roster](docs/img/team-roster.png)
+![Team: live sessions and the timeline](docs/img/team.png)
 
-![Ledger: tasks, review rounds and integrity](docs/img/ledger.png)
+*Each running session shows its type of work and the helpers it has called, with the busy ones lit; the timeline below shows when each helper was busy, coloured by model.*
+
+![Team: the roster](docs/img/team-roster.png)
+
+*The roster lists every named helper with its model and what it may not do, then the types of work with their rework budgets.*
+
+![Ledger: weekly figures and charts](docs/img/ledger.png)
+
+*The top row compares this week with last week (tasks closed, first-pass READY rate, findings caught); the charts below show usage by model, helper and type of work, plus the ladder of rework budgets.*
+
+![Ledger: the tasks table](docs/img/ledger-tasks.png)
+
+*One row per task: the rework column reads "3 of 2 +1 granted" where the operator added a round, and the verdict column separates READY from unverified work and from tasks with no verdict yet.*
 
 ## How it works
 

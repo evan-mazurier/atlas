@@ -170,7 +170,7 @@ function dayView(P, body) {
   const rows = Math.max(1, pk.rows);
   const rl = mk("div", "rl", null, left);
   rl.style.height = (rows * ROW_H + 8) + "px";
-  mk("b", null, "Calendar", rl);
+  mk("b", null, "Events", rl);
   const lane = mk("div", "lane plan-surface", null, mid);
   lane.style.height = (rows * ROW_H + 8) + "px";
   lane.style.backgroundSize = gridSize;

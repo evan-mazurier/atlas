@@ -5,7 +5,7 @@ import { bypassRowHTML, bypassListHTML, noteLabel } from "./web2/screens/ledger-
 
 const BP = {
   key: "2026-10-10T10:00:00+02:00|s1", t: "2026-10-10T10:00:00+02:00", tool: "Bash", matched: "protected-folder", denied: true,
-  report: { headline: "The Chief tried to read the ledger record of 9 Oct with a shell command. Blocked.", own_words: "look <b>x</b>",
+  report: { headline: "The orchestrator tried to read the ledger record of 9 Oct with a shell command. Blocked.", own_words: "look <b>x</b>",
     would_change: "The command looks read-only.", context: 'Session "A", type chore.', after: "No further activity recorded in the next 5 minutes.",
     reading: "Isolated read.", level: "info", notes: [], actor_is_main: false },
 };

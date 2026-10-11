@@ -55,10 +55,10 @@ MAX_STEPS = 12
 # --- vocabulary --------------------------------------------------------------------------------------
 # display id -> (name, tier). Ids are the org chart's creature ids; `op` is the human.
 AGENTS = {
-    "op": ("Operator", "human"), "chief": ("Chief", "opus"), "scout": ("Scout", "haiku"),
-    "clerk": ("Clerk", "haiku"), "analyst": ("Analyst", "sonnet"), "builder": ("Builder", "sonnet"),
-    "writer": ("Writer", "sonnet"), "labtech": ("Lab Tech", "haiku"), "inspector": ("Inspector", "sonnet"),
-    "partner": ("Senior Partner", "opus"),
+    "op": ("Operator", "human"), "chief": ("orchestrator", "opus"), "scout": ("scout", "haiku"),
+    "clerk": ("sweeper", "haiku"), "analyst": ("researcher", "sonnet"), "builder": ("implementer", "sonnet"),
+    "writer": ("drafter", "sonnet"), "labtech": ("test-runner", "haiku"), "inspector": ("reviewer", "sonnet"),
+    "partner": ("senior-reviewer", "opus"),
 }
 # helper `agent_type` (the subagent name) -> display id. `explore` is Claude Code's built-in recon helper.
 AGENT_TYPE_ID = {
@@ -140,7 +140,7 @@ def project_label(folder: str, cwd: str | None = None) -> str:
 
 def worktype_label(t: str) -> str:
     t = str(t or "").strip().lower()
-    return WORKTYPE_LABEL.get(t) or t.replace("-", " ").replace("_", " ").title() or "Chief working"
+    return WORKTYPE_LABEL.get(t) or t.replace("-", " ").replace("_", " ").title() or "Orchestrator working"
 
 
 def _excluded_folder(folder: str) -> bool:
@@ -560,16 +560,16 @@ def _analyse(sid: str, evs: list[dict], now: dt.datetime, cost_fn, helper_mtime_
     if cmd:
         label, tag, ask = PLAYBOOKS[cmd][0], f"/{cmd}", False
     elif wtype:
-        label, tag, ask = worktype_label(wtype), f"just ask · type: {str(wtype).strip().lower()}", True
+        label, tag, ask = worktype_label(wtype), f"declared: {str(wtype).strip().lower()}", True
     else:
         types = {h["type"] for h in win_helpers}
         inferred = next((lab for t, lab in INFER_ORDER if t in types), None)
         if inferred is None and types and all(AGENT_TYPE_ID.get(t) == "scout" for t in types):
             inferred = "Quick question"
         if inferred:
-            label, tag, ask = inferred, "just ask · inferred", True
+            label, tag, ask = inferred, "type guessed from activity", True
         else:
-            label, tag, ask = "Chief working", "just ask", True
+            label, tag, ask = "Orchestrator working", "no type declared", True
 
     area_arg = next((str(e["area"]).strip().lower() for e in reversed(win) if e.get("ev") == "WorkType" and e.get("area")), None)
     plan_ref = next((str(e["plan_ref"]) for e in reversed(win) if e.get("ev") == "WorkType" and e.get("plan_ref")), None)

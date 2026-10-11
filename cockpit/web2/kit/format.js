@@ -106,11 +106,14 @@ export function assignLanes(items) {
   return lane;
 }
 
-const HELPER_NAMES = {
-  chief: "Chief", scout: "Scout", explore: "Scout", sweeper: "Clerk", researcher: "Analyst", implementer: "Builder",
-  drafter: "Writer", "test-runner": "Lab Tech", reviewer: "Inspector", "senior-reviewer": "Senior Partner",
-};
-export function helperName(type) { return HELPER_NAMES[String(type || "").toLowerCase()] || String(type || ""); }
+/** The roster names (agent file names) the operator knows; the Ledger and the Team screen both use these.
+    The main session ("chief") reads "orchestrator"; unknown types (general-purpose, Explore...) show as they are. */
+const ROSTER = ["scout", "test-runner", "sweeper", "implementer", "researcher", "drafter", "reviewer", "senior-reviewer"];
+export function rosterName(type) {
+  const raw = String(type == null ? "" : type), k = raw.toLowerCase();
+  if (k === "chief") return "orchestrator";
+  return ROSTER.includes(k) ? k : raw;
+}
 
 /** Direction text for a KPI: {text, tone} with tone ok | bad | neu; `good` is "up", "down" or "none". */
 export function delta(value, prev, good, unit = "") {

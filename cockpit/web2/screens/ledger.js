@@ -2,12 +2,12 @@
    `?sample=1` (page query or hash query) reads cockpit/web2/sample/ledger-*.json instead, so the
    screen can be checked before the API exists. Filters live in module state; polls never reset them. */
 import {
-  compact, dayLabel, dayTitle, delta, duration, esc, helperName, helperTier, isoToHM, isoWeek, niceTicks, tickDecimals,
+  compact, dayLabel, dayTitle, delta, duration, esc, rosterName, helperTier, isoToHM, isoWeek, niceTicks, tickDecimals,
   shiftWeek, weekLabel,
 } from "../kit/format.js";
 import { renderMarkdown } from "../kit/markdown.js";
 import { bypassListHTML, wireBypassList } from "./ledger-bypass.js";
-import { taskCellParts, taskTitle } from "./ledger-model.js";
+import { TASK_HEAD_TIPS, roundsParts, statusWord, taskCellParts, taskTitle, verdictParts } from "./ledger-model.js";
 import { integrityLabel, integrityLevel, integrityPanelHTML } from "./ledger-integrity.js";
 
 let S = null;
@@ -16,13 +16,13 @@ let onKey = null;
 const TIER_NAMES = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" };
 const TYPES = [["", "All types"], ["coding", "Coding"], ["research", "Research"], ["writing", "Writing"], ["chore", "Chore"],
   ["legal", "Legal or money"], ["quick-question", "Quick question"], ["playbook", "Playbook"], ["undeclared", "Undeclared"]];
-const STATUSES = [["", "All statuses"], ["open", "Open"], ["done", "Done"], ["switched", "Switched"], ["ended", "Ended"]];
+const STATUSES = [["", "All statuses"], ["open", "In progress"], ["done", "Closed"], ["switched", "Next task started"], ["ended", "Session ended"]];
 const KPIS = [
   { key: "tasks_closed", label: "Tasks closed", fmt: (v) => String(v), good: "up", unit: "" },
   { key: "first_pass_ready_pct", label: "First-pass READY", fmt: (v) => v + " %", good: "up", unit: "pts" },
-  { key: "caught", label: "Caught by the checks", fmt: (v) => String(v), good: "none", unit: "" },
+  { key: "caught", label: "Caught by the checks", sub: "findings raised by reviewers", fmt: (v) => String(v), good: "none", unit: "" },
   { key: "rework_refused", label: "Rework refused", fmt: (v) => String(v), good: "down", unit: "" },
-  { key: "weighted_usage", label: "Weighted usage", fmt: compact, good: "down", unit: "%rel" },
+  { key: "weighted_usage", label: "Weighted usage", sub: "price-weighted tokens, Sonnet = 1", fmt: compact, good: "down", unit: "%rel" },
 ];
 
 function el(tag, cls, text, parent) {
@@ -71,6 +71,7 @@ function renderKpis(kit, stats, host) {
     const d = (stats.kpis || {})[k.key] || { value: 0, prev: 0, spark: [] };
     const t = el("div", "kpi", null, box);
     el("div", "kl", k.label, t);
+    if (k.sub) el("div", "ledger-ksub", k.sub, t);
     el("div", "kv", d.value == null ? "–" : k.fmt(d.value), t);
     const dd = el("div", "kd", null, t);
     const de = d.value == null || d.prev == null ? { text: "", tone: "neu" } : delta(d.value, d.prev, k.good, k.unit);
@@ -131,7 +132,7 @@ function renderStats(ctx, stats) {
   tierLegend(h.lg, kit);
   const hbox = el("div", "hbs", null, h.c);
   if (hel.length) {
-    kit.hbars(hbox, hel.map((x) => ({ label: helperName(x.helper), sub: TIER_NAMES[x.tier] || x.tier, v: x.weighted, text: compact(x.weighted), color: "var(--m-" + (x.tier || helperTier(x.helper)) + ")" })), hel[0].weighted);
+    kit.hbars(hbox, hel.map((x) => ({ label: rosterName(x.helper), sub: TIER_NAMES[x.tier] || x.tier, v: x.weighted, text: compact(x.weighted), color: "var(--m-" + (x.tier || helperTier(x.helper)) + ")" })), hel[0].weighted);
   } else el("p", "note", "No helper usage recorded.", hbox);
 
   const ubt = (stats.usage_by_type || []).filter((x) => x.weighted > 0);
@@ -159,7 +160,7 @@ function renderStats(ctx, stats) {
   const lad = card(grid, "The ladder", "How much room each type of work has, and what would move it", "wide");
   const lh = el("div", "tscroll", null, lad.c);
   lh.style.marginTop = "8px";
-  kit.table(lh, [{ t: "Type" }, { t: "Rung" }, { t: "Rework budget", num: true }, { t: "Tasks (4 wk)", num: true }, { t: "First-pass READY", num: true }, { t: "What would move it", mu: true }],
+  kit.table(lh, [{ t: "Type" }, { t: "Rung", tip: "how much the type runs on its own: 1 every answer read, 2 reviewed before done, 3 closes itself" }, { t: "Rework budget", num: true }, { t: "Tasks (4 wk)", num: true }, { t: "First-pass READY", num: true }, { t: "What would move it", mu: true }],
     (stats.ladder || []).map((x) => [x.label || x.type, x.rung || "", x.budget == null ? "–" : String(x.budget), String(x.tasks_4w), x.first_pass_pct == null ? "–" : kit.meterCell(x.first_pass_pct), x.move || ""]));
 
   const by = stats.bypass || { count: 0, blocked: 0, recent: [] };
@@ -198,19 +199,11 @@ function paintUnverified() {
   S.unvEl.textContent = S.unverified + (S.unverified === 1 ? " unverified task" : " unverified tasks");
 }
 
-function crewText(crew) { return (crew || []).map(helperName).join(" · ") || "–"; }
+function crewText(crew) { return (crew || []).map(rosterName).join(" · ") || "–"; }
 
 function verdictOf(kit, t) {
-  const refused = (t.refusals || []).some((x) => x.would === false);
-  if (refused) return kit.verdictCell("×", "var(--crit)", "Refused, over budget");
-  if (t.unverified_flag) return kit.verdictCell("!", "var(--warn)", "Unverified, no passing review");
-  if (t.final_verdict === "READY") return kit.verdictCell("✓", "var(--ok)", "READY" + (t.status === "done" ? " · closed" : ""));
-  if (t.final_verdict === "NEEDS_CHANGES") {
-    const left = t.rounds && t.rounds.left != null ? " · " + t.rounds.left + " left" : "";
-    return kit.verdictCell("!", "var(--warn)", "NEEDS CHANGES" + left);
-  }
-  if (t.final_verdict === "ESCALATE") return kit.verdictCell("!", "var(--crit)", "ESCALATED");
-  return kit.verdictCell("–", "var(--muted)", t.status || "open");
+  const [glyph, tone, label] = verdictParts(t);
+  return kit.verdictCell(glyph, "var(--" + tone + ")", label);
 }
 
 function badge(parent, text, cls) { return el("span", "ledger-badge" + (cls ? " " + cls : ""), text, parent); }
@@ -223,6 +216,16 @@ function titleCell(t) {
     if (t.src === "v1") badge(td, "v1");
     if (t.auto) badge(td, "auto");
     if (t.unverified_flag) badge(td, "unverified", "warn");
+    const st = t.session_title;
+    if (st && st !== p.text && st !== taskTitle(t)) el("span", "ledger-sub", st, td);
+  };
+}
+
+function roundsCell(t) {
+  const p = roundsParts(t.rounds);
+  return (td) => {
+    td.appendChild(document.createTextNode(p.main));
+    if (p.sub) el("span", "ledger-sub", p.sub, td);
   };
 }
 
@@ -239,9 +242,9 @@ function renderTasks(ctx, tasks) {
   const wrapper = el("div", "tscroll ledger-tbox", null, host);
   wrapper.dataset.keepScroll = "1";
   const table = kit.table(wrapper,
-    [{ t: "Task" }, { t: "Area" }, { t: "Type" }, { t: "Crew" }, { t: "Rounds", num: true }, { t: "Caught", num: true }, { t: "Usage", num: true }, { t: "Verdict" }],
+    ["Task", "Area", "Type", "Crew", "Rework rounds", "Caught", "Usage", "Verdict"].map((h) => ({ t: h, tip: TASK_HEAD_TIPS[h], num: ["Rework rounds", "Caught", "Usage"].includes(h) })),
     tasks.map((t) => [titleCell(t), kit.areaCell(t.area, ctx.areaName(t.area)), t.type + (t.auto ? " · auto" : ""), crewText(t.crew),
-      t.rounds ? t.rounds.needs_changes + " / " + (t.rounds.budget == null ? "–" : t.rounds.budget) : "–",
+      roundsCell(t),
       t.caught ? String(t.caught) : "–", compact(t.cost && t.cost.weighted), verdictOf(kit, t)]));
   table.querySelectorAll("tbody tr").forEach((tr, i) => {
     tr.classList.add("ledger-row");
@@ -293,7 +296,8 @@ function paintDrawer(ctx, t, events) {
   el("h2", null, taskTitle(t), head);
   const sub = el("div", "ledger-dsub", null, head);
   kit.areaCell(t.area, ctx.areaName(t.area))(el("span", null, null, sub));
-  sub.appendChild(document.createTextNode(" " + t.type + " · " + (t.status || "")));
+  sub.appendChild(document.createTextNode(" " + t.type + " · " + statusWord(t.status)));
+  if (t.session_title && t.session_title !== taskTitle(t)) el("div", "ledger-sub", t.session_title, head);
   if (t.src === "v1") badge(sub, "v1");
   if (t.auto) badge(sub, "auto");
   if (t.unverified_flag) badge(sub, "unverified", "warn");
@@ -302,7 +306,7 @@ function paintDrawer(ctx, t, events) {
   dl(body, [
     ["Started", isoToHM(t.started)], ["Ended", isoToHM(t.ended)], ["Duration", t.duration_s ? duration(t.duration_s) : ""],
     ["Crew", crewText(t.crew)],
-    ["Rounds", r.needs_changes != null ? r.needs_changes + " of " + (r.budget == null ? "no budget" : r.budget) + (r.left != null ? " · " + r.left + " left" : "") : ""],
+    ["Rework rounds", t.rounds ? [roundsParts(r).main, roundsParts(r).sub, r.left != null ? r.left + " left" : ""].filter(Boolean).join(" · ") : ""],
     ["Caught", String(t.caught || 0)], ["Edits", String(t.edits || 0)],
     ["Final verdict", t.final_verdict ? t.final_verdict.replace("_", " ") : "none"],
   ]);
@@ -311,7 +315,7 @@ function paintDrawer(ctx, t, events) {
   el("h3", "ledger-dh3", "Verdicts", body);
   if (vs.length) {
     const ul = el("ul", "ledger-list", null, body);
-    vs.forEach((v) => el("li", null, isoToHM(v.t) + "  " + helperName(v.helper) + "  " + String(v.verdict).replace("_", " ") + "  (version " + v.version + ", " + v.findings + " findings)", ul));
+    vs.forEach((v) => el("li", null, isoToHM(v.t) + "  " + rosterName(v.helper) + "  " + String(v.verdict).replace("_", " ") + "  (version " + v.version + ", " + v.findings + " findings)", ul));
   } else el("p", "note", "No verdict recorded.", body);
 
   const bh = (t.cost && t.cost.by_helper) || {};
@@ -319,7 +323,7 @@ function paintDrawer(ctx, t, events) {
   el("h3", "ledger-dh3", "Cost by helper", body);
   if (rows.length) {
     const hb = el("div", "hbs", null, body);
-    kit.hbars(hb, rows.map(([h, v]) => ({ label: helperName(h), sub: TIER_NAMES[helperTier(h)], v, text: compact(v), color: "var(--m-" + helperTier(h) + ")" })), rows[0][1]);
+    kit.hbars(hb, rows.map(([h, v]) => ({ label: rosterName(h), sub: TIER_NAMES[helperTier(h)], v, text: compact(v), color: "var(--m-" + helperTier(h) + ")" })), rows[0][1]);
     el("p", "note", "Total " + compact(t.cost.weighted) + " weighted", body).style.marginTop = "6px";
   } else el("p", "note", "No cost recorded.", body);
 

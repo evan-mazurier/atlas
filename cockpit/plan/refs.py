@@ -6,7 +6,6 @@ id (`t_xxxxxxxx`) or a project plan.yaml id (`<project>/<task id>`)."""
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 try:
     from . import model, store
@@ -41,10 +40,9 @@ def _index() -> dict:
     except Exception:  # noqa: BLE001
         pass
     try:      # every project plan.yaml task, DONE ones included: a finished task still names the work that was linked
-        for pid, pfile in model._registry_plan_files().items():
-            for t in model._read_plan_yaml(Path(pfile)):
-                if t.get("id") and t.get("title"):
-                    idx[f"{pid}/{t['id']}"] = {"title": t.get("title"), "kind": "task"}
+        for pid, t in model.registry_plan_tasks():
+            if t.get("id") and t.get("title"):
+                idx[f"{pid}/{t['id']}"] = {"title": t.get("title"), "kind": "task"}
     except Exception:  # noqa: BLE001
         pass
     return idx

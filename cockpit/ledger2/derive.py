@@ -83,6 +83,18 @@ def _new_task(e: dict, wf: dict, prev: dict | None) -> dict:
     return t
 
 
+def _own_title(t: dict) -> str | None:
+    """Summary goal, else the description given to the task's first helper, else the session title (the API puts the
+    linked Plan item's title in front of all three)."""
+    goal = (t["summary"] or {}).get("goal") if t["summary"] else None
+    if goal:
+        return goal
+    for v in t["helpers"].values():
+        if v["labels"]:
+            return v["labels"][0]
+    return t["session_title"] or None
+
+
 def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
     ended = t["ended"]
     rec_end = ended or last_t or t["started"]
@@ -98,11 +110,12 @@ def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
     helpers = [{"helper": h, "count": v["count"], "labels": v["labels"]} for h, v in t["helpers"].items()]
     out = {
         "id": t["id"], "src": "v2", "sid": t["sid"], "session_title": t["session_title"],
-        "title": (t["summary"] or {}).get("goal") if t["summary"] else None,
+        "title": _own_title(t),
         "area": t["area"], "type": t["type"], "playbook": t["playbook"], "plan_ref": t.get("plan_ref"), "auto": t["auto"],
         "started": t["started"], "ended": ended, "duration_s": t["duration_s"], "status": t["status"],
         "crew": list(t["helpers"].keys()), "helpers": helpers,
-        "rounds": {"needs_changes": nc, "budget": budget, "granted": t["_granted"], "left": left},
+        "rounds": {"needs_changes": nc, "budget": budget, "granted": t["_granted"], "left": left,
+                   "own": len(t["_nc"]), "carried": t["_carried"]},
         "verdicts": verdicts, "final_verdict": final, "checked": checked,
         "unverified_flag": bool(unverified), "caught": t["caught"], "edits": t["_edits"],
         "refusals": t["refusals"], "cost": t["cost"], "summary": t["summary"],
@@ -170,7 +183,16 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
                 cur["status"], cur["ended"] = "ended", t
                 cur = None
             continue
+        if ev == "helper_resume" and e.get("agent_id") in agent_helper:
+            # the hook's resume: a new launch of that agent for sequencing; its next verdict is a new one
+            spawn_n += 1
+            seq_of[e["agent_id"]] = spawn_n
+            for x in tasks.values():
+                x["_seen_agents"].discard(e["agent_id"])
         if ev == "helper_paired" and e.get("agent_id"):
+            if e.get("tuid") is None and e["agent_id"] in agent_helper:      # a resumed run starting again
+                for x in tasks.values():
+                    x["_seen_agents"].discard(e["agent_id"])
             agent_helper[e["agent_id"]] = e.get("helper")
             if e.get("tuid") in seq_of:
                 seq_of[e["agent_id"]] = seq_of[e["tuid"]]
@@ -327,8 +349,8 @@ def derive_v1(events: list[dict], areas: list[dict], wf: dict) -> list[dict]:
             status, ended = "done", merged.get("t")
         elif fin is not None:
             status, ended = "ended", fin.get("finished") or fin.get("t")
-        else:
-            status, ended = "open", None
+        else:                      # v1 is retired: a job without a finish is over, at its last event
+            status, ended = "ended", evs[-1].get("t")
         last_t = evs[-1].get("t")
         cost["weighted"] = int(cost["weighted"])
         for m in cost["by_model"].values():
@@ -344,7 +366,7 @@ def derive_v1(events: list[dict], areas: list[dict], wf: dict) -> list[dict]:
             "duration_s": _secs(started, ended or last_t), "status": status,
             "crew": crew, "helpers": [{"helper": h, "count": 1, "labels": []} for h in crew],
             "rounds": {"needs_changes": nc, "budget": budget, "granted": 0,
-                       "left": None if budget is None else max(0, budget - nc)},
+                       "left": None if budget is None else max(0, budget - nc), "own": nc, "carried": 0},
             "verdicts": verdicts, "final_verdict": final, "checked": final == "READY",
             "unverified_flag": False, "caught": sum(v["findings"] for v in verdicts if v["verdict"] == "NEEDS_CHANGES"),
             "edits": 0, "refusals": [], "cost": cost, "summary": None, "project": project,

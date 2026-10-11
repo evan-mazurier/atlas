@@ -109,7 +109,8 @@ def task_resolved(S):
     """The task's most recent reviewer verdict is READY, it covers the latest main-session version (helpers edit in
     their own worktrees, so `version` counts only edits made in the main session), and that reviewer was LAUNCHED after
     the latest NEEDS CHANGES arrived (`nc_at` = how many helpers had been launched when it arrived; a reviewer started
-    in parallel with the failing one cannot clear it). A task opened by a carry has no verdict yet, so it stays
+    in parallel with the failing one cannot clear it; a reviewer RESUMED by the main session's SendMessage after the
+    NEEDS CHANGES counts as launched at the resume, see `helper_resume`). A task opened by a carry has no verdict yet, so it stays
     unresolved (the double-declaration escape stays closed). Honest limits: a READY on an unrelated artifact, or from a
     reviewer told to answer READY, still counts."""
     if S.get("last_verdict") != "READY" or S.get("last_verified", 0) < S.get("version", 0):
@@ -562,8 +563,26 @@ def apply_event(S, e, wf):
             "helper": e.get("helper"), "version": int(e.get("version") or 0), "t": e.get("t"),
             "bg": bool(e.get("bg")), "task": e.get("task"), "agent_id": None,
             "label": str(e.get("label") or "")[:60]}
+    elif ev == "helper_resume":
+        # the main session resumed a helper it launched (SendMessage): it counts as launched now, so only verdicts
+        # arriving AFTER this point carry the new seq (earlier verdicts keep the seq they were recorded with)
+        aid = e.get("agent_id")
+        if aid in S["agents"]:
+            S["spawn_seq"] = S.get("spawn_seq", 0) + 1
+            # like a fresh launch: current seq, version and task
+            S["agents"][aid].update(seq=S["spawn_seq"], version=S.get("version", 0), task=S.get("task"))
+            for p in S["pending"].values():
+                if p.get("agent_id") == aid:
+                    p["seq"] = S["spawn_seq"]
     elif ev == "helper_paired":
         aid, tuid = e.get("agent_id"), e.get("tuid")
+        if tuid is None and aid in S["agents"]:
+            # a resumed helper running again: keep its record and seq; its next answer is a new verdict
+            if aid in S["captured"]:
+                S["captured"].remove(aid)
+            if aid in S["ended_ids"]:
+                S["ended_ids"].remove(aid)
+            return
         if tuid in S["pending"]:
             S["pending"][tuid]["agent_id"] = aid
         p = S["pending"].get(tuid) or {}
@@ -2109,13 +2128,25 @@ def _forward_texts(ti, depth=0, budget=None):
 
 def h_pre_forward(H):
     """A scheduled prompt (CronCreate, ScheduleWakeup) or a message to another session (SendMessage) that STARTS with
-    /ack-break or /grant-rework would later arrive as a UserPromptSubmit: refuse it here, in every mode."""
-    if not any(USER_ONLY_RE.match(t) for t in _forward_texts(H.ti)):
-        return None
-    with Txn(H) as tx:
-        tx.emit({"ev": "ignored", "what": ("forged user-only command via " + H.tool)[:60]})
-    return deny("/ack-break, /grant-rework and /allow-publish are typed by the operator only; this scheduled prompt "
-                "or message was refused.")
+    /ack-break or /grant-rework would later arrive as a UserPromptSubmit: refuse it here, in every mode.
+    Also: a SendMessage from the MAIN session to a helper this session launched is a resume (`helper_resume`)."""
+    if any(USER_ONLY_RE.match(t) for t in _forward_texts(H.ti)):
+        with Txn(H) as tx:
+            tx.emit({"ev": "ignored", "what": ("forged user-only command via " + H.tool)[:60]})
+        return deny("/ack-break, /grant-rework and /allow-publish are typed by the operator only; this scheduled "
+                    "prompt or message was refused.")
+    if H.tool == "SendMessage" and not H.agent_id:
+        try:
+            to = H.ti.get("to")
+            if isinstance(to, str) and to:
+                with Txn(H) as tx:
+                    # only a helper whose previous run has ENDED can be resumed; a running one keeps its seq
+                    if to in tx.state["agents"] and to in tx.state["ended_ids"]:
+                        tx.emit({"ev": "helper_resume", "task": tx.state["task"], "agent_id": to,
+                                 "helper": tx.state["agents"][to].get("helper")})
+        except Exception:  # noqa: BLE001
+            log_error()
+    return None
 
 
 def h_pre_skill(H):
@@ -2382,6 +2413,9 @@ def h_subagent_start(H):
     helper = str(H.d.get("agent_type") or "").lower()
     with Txn(H) as tx:
         S = tx.state
+        if aid in S["agents"]:                # a resumed helper: never steal a fresh launch's pairing
+            tx.emit({"ev": "helper_paired", "task": S["task"], "agent_id": aid, "helper": helper, "tuid": None})
+            return None
         cands = [(k, p) for k, p in S["pending"].items()
                  if p.get("helper") == helper and not p.get("agent_id") and p.get("task") == S["task"]]
         tuid = None

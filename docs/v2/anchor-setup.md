@@ -1,7 +1,7 @@
 # Ledger outside anchor: setup
 
 What it is: once a day, a small fingerprint (a hash) of the last line of each ledger day file is written to a
-separate private GitHub repo. If someone later edits the ledger and re-chains it so the hash chain looks clean, the
+separate public GitHub repo (hashes only: a free account enforces the no-rewrite rules on public repos only). If someone later edits the ledger and re-chains it so the hash chain looks clean, the
 fingerprints on GitHub no longer match and the Ledger integrity panel turns red. The ledger content itself never leaves
 the PC: only hashes.
 
@@ -11,7 +11,7 @@ agent that edits Atlas itself (see Limits).
 
 ## Steps for the operator (about 10 minutes)
 
-1. **Create the repo.** GitHub, New repository, owner `example`, name `atlas-anchor`, **Private**, tick "Add a
+1. **Create the repo.** GitHub, New repository, owner `example`, name `atlas-anchor`, **Public** (with "Keep my email addresses private" on in GitHub email settings, so no commit carries a personal address), tick "Add a
    README" (so the repo is not empty). Create.
 2. **Block rewriting.** In the repo: Settings, Rules, Rulesets, New ruleset, **New branch ruleset**.
    - Ruleset name: `no-rewrite`. Enforcement status: **Active**.
@@ -30,7 +30,7 @@ agent that edits Atlas itself (see Limits).
    running and set to start automatically), then run the check again.
 5. **Tell the orchestrator.** It will do a dry run (`py -3.12 <repo>\tools\anchor_ledger.py --dry-run`), the first
    real run (which also commits a `.gitattributes` file in the clone and records a one-time `anchor_configured` event in
-   the ledger), and install the daily task `AtlasLedgerAnchor` (23:55, via `tools\install_anchor_task.ps1`).
+   the ledger), and install the daily task `AtlasLedgerAnchor` (21:00, via `tools\install_anchor_task.ps1`).
 
 ## Plain notes
 
@@ -45,7 +45,7 @@ agent that edits Atlas itself (see Limits).
   red: the daily task has probably stopped.
 - If the cockpit ever shows an anchor mismatch, do not "fix" it: it means the ledger or the anchor file differs from
   what was recorded outside. The tool refuses to anchor anything while a mismatch exists.
-- A day that is still open is anchored as it stands at 23:55 and again, once final, on the next run. Lines written
+- A day that is still open is anchored as it stands at 21:00 and again, once final, on the next run. Lines written
   between the last run and a later edit are not covered until the next run.
 - The clone folder is protected: only `tools\anchor_ledger.py` may name it from a Claude session, and the Edit and Write
   tools cannot touch it.

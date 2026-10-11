@@ -57,7 +57,7 @@ def test_rule_d_isolated_read_is_info():
     r = report(evs)
     assert r["level"] == "info"
     assert r["reading"] == "Isolated read, no rework refusal for this helper before: most likely a wrong tool choice."
-    assert r["headline"] == "The Chief tried to read the ledger record of 9 Oct with a shell command. Blocked."
+    assert r["headline"] == "The orchestrator tried to read the ledger record of 9 Oct with a shell command. Blocked."
     assert r["would_change"] == "The command looks read-only."
     assert r["own_words"] == "look at the ledger"
     assert 'Session "Atlas v2 build", type chore.' in r["context"]
@@ -85,7 +85,7 @@ def test_rule_b_change_or_delete_alerts(effect, word):
     r = report(evs)
     assert r["level"] == "alert" and r["reading"] == "Tried to alter the record or the rules."
     assert r["would_change"] == f"Yes, it would have {word} the ledger record of 10 Oct."
-    assert r["headline"].startswith(f"The Chief tried to {effect} ")
+    assert r["headline"].startswith(f"The orchestrator tried to {effect} ")
 
 
 def refusal(min_, helper=None, **kw):
@@ -184,9 +184,7 @@ def test_rework_used_over_budget_in_context():
 
 
 def test_helper_actor_names_and_task_label():
-    for helper, name in [("implementer", "Builder"), ("test-runner", "Lab Tech"), ("reviewer", "Inspector"),
-                         ("senior-reviewer", "Senior Partner"), ("scout", "Scout"), ("sweeper", "Clerk"),
-                         ("researcher", "Analyst"), ("drafter", "Writer")]:
+    for helper, name in [(h, h) for h in ("implementer", "test-runner", "reviewer", "senior-reviewer", "scout", "sweeper", "researcher", "drafter")]:
         evs = base_events() + [attempt(actor=helper, agent_id="ag", actor_task="check the card")]
         r = report(evs)
         assert r["headline"].startswith(f"The {name} tried")
@@ -198,7 +196,7 @@ def test_after_helper_end_and_verdict():
                            {"t": t(1), "ev": "verdict", "sid": "s", "agent_id": "ag", "verdict": "READY", "helper": "reviewer"},
                            {"t": t(2), "ev": "helper_end", "sid": "s", "agent_id": "ag"}]
     a = report(evs)["after"]
-    assert "Then handed back to the Chief." in a and "(READY)" in a
+    assert "Then handed back to the orchestrator." in a and "(READY)" in a
 
 
 def test_after_other_activity():
@@ -209,7 +207,7 @@ def test_after_other_activity():
 def test_old_event_without_new_fields_renders():
     old = {"t": t(0), "ev": "bypass_attempt", "sid": "s", "tool": "Bash", "matched": ".claude/hooks/atlas", "denied": True}
     r = report([old])
-    assert r["headline"] == "The Chief tried to use the hooks folder with a shell command. Blocked."
+    assert r["headline"] == "The orchestrator tried to use the hooks folder with a shell command. Blocked."
     assert r["own_words"] == "Not recorded."
     assert r["would_change"] == "Not recorded."
     assert "cmd" not in r and r["level"] == "info" and r["reading"] == "No details recorded."
@@ -220,7 +218,7 @@ def test_old_event_without_new_fields_renders():
 def test_old_event_actor_falls_back_to_top_level_agent_fields():
     helper = {"t": t(0), "ev": "bypass_attempt", "sid": "s", "tool": "Bash", "matched": "x", "denied": True,
               "agent_id": "ag", "agent_type": "scout"}
-    assert report([helper])["headline"].startswith("The Scout tried")
+    assert report([helper])["headline"].startswith("The scout tried")
     nameless = dict(helper)
     nameless.pop("agent_type")
     assert report([nameless])["headline"].startswith("An unknown agent tried")
@@ -274,12 +272,12 @@ def test_stats_bypass_rows_carry_report_and_note_via_tool(ledger):
     row = p["recent"][0]
     assert row["key"] == f"{at}|s9"
     assert [(n["text"], n["by"]) for n in row["report"]["notes"]] == [("fine", "main")]
-    assert row["report"]["headline"].startswith("The Chief tried to read")
+    assert row["report"]["headline"].startswith("The orchestrator tried to read")
     assert store.verify_chain()["intact"]
 
 
 def test_repeats_are_counted_per_actor_not_per_session():
-    """10 Oct pattern: a Builder and a Senior Partner in one sid, no agent_id on the old events."""
+    """10 Oct pattern: an implementer and a senior-reviewer in one sid, no agent_id on the old events."""
     evs = base_events()
     for k, actor in ((0, "implementer"), (6, "senior-reviewer"), (225, "implementer"), (230, "senior-reviewer")):
         evs.append(attempt(k, actor=actor, effect="read"))

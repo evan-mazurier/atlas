@@ -1,7 +1,7 @@
 /* Team roster (docs/v2/contracts.md §5.1, §8.4): the collapsible tables under the creature strip.
    Everything comes from GET /api/v2/shell/roster (agent files + workflows.yaml, read per request);
    this module only lays it out. rosterHtml is pure so the node tests can run it. */
-import { esc, helperName } from "../kit/format.js";
+import { esc, rosterName } from "../kit/format.js";
 
 const KEY = "atlas.team.roster.open";
 const ORDER = ["scout", "sweeper", "researcher", "implementer", "drafter", "test-runner", "reviewer", "senior-reviewer"];
@@ -31,15 +31,15 @@ function table(heads, rows, cls) {
 export function rosterHtml(d) {
   const helpers = [CHIEF].concat((d.helpers || []).slice().sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id)));
   const hRows = helpers.map((h) => [
-    `<b>${esc(h === CHIEF ? "Chief" : helperName(h.id))}</b>`, `<span class="mono">${esc(h.id)}</span>`, model(h.model),
+    `<b>${esc(h === CHIEF ? "orchestrator" : rosterName(h.id))}</b>`, model(h.model),
     esc(plain(h.use_for)), esc(plain(h.never))]);
   const tRows = (d.types || []).map((t) => [
-    `<b>${esc(t.label || t.id)}</b>`, esc((t.crew || []).map(helperName).join(", ") || (t.id === "playbook" ? "set per playbook (below)" : "none")),
+    `<b>${esc(t.label || t.id)}</b>`, esc((t.crew || []).map(rosterName).join(", ") || (t.id === "playbook" ? "set per playbook (below)" : "none")),
     t.budget == null ? "no rework" : esc(String(t.budget)), esc(t.rung == null ? "" : String(t.rung)), esc(plain(t.move))]);
   const pRows = (d.playbooks || []).map((p) => [`<span class="mono">${esc(p.command)}</span>`,
-    esc(p.per_task ? "set per task, by its type" : ((p.crew || []).map(helperName).join(", ") || "none")),
+    esc(p.per_task ? "set per task, by its type" : ((p.crew || []).map(rosterName).join(", ") || "none")),
     p.per_task ? "set per task" : (p.budget == null ? "no rework" : esc(String(p.budget))), esc(p.area || "")]);
-  return `<h4>Helpers</h4>${table(["Name", "Id", "Model", "Use it for", "Never"], hRows, "roster-helpers")}
+  return `<h4>Helpers</h4>${table(["Name", "Model", "Use it for", "Never"], hRows, "roster-helpers")}
     <h4>Types of work</h4>${table(["Type", "Crew", "Rework budget", "Rung", "Moves when"], tRows, "roster-types")}
     <h4>Playbooks</h4>${table(["Command", "Crew", "Rework budget", "Area"], pRows, "roster-playbooks")}`;
 }

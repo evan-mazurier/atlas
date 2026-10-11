@@ -77,7 +77,7 @@ def test_helper_working_then_done():
     assert s["status"] == "working"
     assert agents(s) == [("op", "done"), ("chief", "working"), ("analyst", "done"), ("builder", "working")]
     assert [x["what"] for x in s["steps"][2:]] == ["Look it up", "Build it"]
-    assert (s["type"], s["tag"]) == ("Coding", "just ask · type: coding")
+    assert (s["type"], s["tag"]) == ("Coding", "declared: coding")
 
 
 def test_background_helper_completes_only_through_subagent_stop():
@@ -128,12 +128,12 @@ def test_inferred_labels():
     for atype, label in [("implementer", "Coding"), ("researcher", "Research"), ("drafter", "Writing"),
                          ("senior-reviewer", "Legal or money")]:
         s = lane(build([prompt("12:00:00")] + helper("12:01:00", None, atype, "x")))
-        assert (s["type"], s["tag"]) == (label, "just ask · inferred")
+        assert (s["type"], s["tag"]) == (label, "type guessed from activity")
     s = lane(build([prompt("12:00:00")] + helper("12:01:00", "12:01:20", "scout", "x")))
     assert s["type"] == "Quick question"
     s = lane(build([prompt("12:00:00")] + helper("12:01:00", None, "test-runner", "x")))
-    assert s["type"] == "Chief working"
-    assert lane(build([prompt("12:00:00")]))["type"] == "Chief working"
+    assert s["type"] == "Orchestrator working"
+    assert lane(build([prompt("12:00:00")]))["type"] == "Orchestrator working"
 
 
 def test_current_task_starts_at_latest_worktype():
@@ -583,7 +583,7 @@ def test_live_background_helper_keeps_the_session_working_after_the_turn_ends():
     s = lane(st)
     assert s["status"] == "working" and s["waiting"] is False
     assert s["via_helpers"] is True
-    assert s["live_helpers"] == [{"agent": "builder", "name": "Builder", "label": "Build the thing", "bg": True}]
+    assert s["live_helpers"] == [{"agent": "builder", "name": "implementer", "label": "Build the thing", "bg": True}]
     assert ("builder", "working") in agents(s) and ("chief", "done") in agents(s)
     assert st["working"] == 1 and st["counts"] == {"builder": 1}
     # without transcript evidence the old rule (session moved on + 10 min of log silence) would have closed it

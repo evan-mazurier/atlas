@@ -22,7 +22,7 @@ export function renderTray(P, host) {
   const ch = mk("div", "ch", null, host);
   const ct = mk("div", "ct", null, ch);
   mk("h3", null, "Review tray", ct);
-  mk("p", null, tray.length + (tray.length === 1 ? " item" : " items") + " waiting. Drag one into the timeline to schedule it.", ct);
+  mk("p", null, tray.length + (tray.length === 1 ? " item" : " items") + " waiting. Drag one onto the calendar to schedule it.", ct);
   const list = mk("div", "plan-rvlist", null, host);
   list.setAttribute("data-keep-scroll", "");
   if (!tray.length) {

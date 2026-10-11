@@ -92,9 +92,9 @@ more; the window tolerance exists only for `nolock` lines. An edit to the newest
 detected until the next write chains onto it.
 **Outside anchor.** Detects edits to closed days of the ledger, including a full re-chain, as long as the GitHub ruleset
 stays in place. Pushes use the operator's existing account SSH key (no passphrase prompt); removing the ruleset needs a browser
-session logged in to GitHub, which is the one thing to keep away from agents. The ruleset also requires linear history. How it works: `tools/anchor_ledger.py` runs daily (Windows task `AtlasLedgerAnchor`, 23:55) and
+session logged in to GitHub, which is the one thing to keep away from agents. The ruleset also requires linear history. How it works: `tools/anchor_ledger.py` runs daily (Windows task `AtlasLedgerAnchor`, 21:00) and
 appends `{day, lines, last_hash, anchored_at}` (plus `head: true` while the day is still open) for the last
-newline-terminated, non-blank line of each day file to `anchors.jsonl` in a separate private git repo, commits, and runs
+newline-terminated, non-blank line of each day file to `anchors.jsonl` in a separate public git repo (hashes only), commits, and runs
 `git push <pinned url> HEAD:main`. The pinned remote lives in the versioned file `anchor.json` at the Atlas root
 (`url` = `git@github.com:example/atlas-anchor.git`, `branch`, `clone` = `D:\AI\atlas-anchor`; the clone path can be
 overridden with `ATLAS_ANCHOR_REPO`; the file named by `ATLAS_ANCHOR_CONFIG` replaces it, for tests). The GitHub branch
@@ -172,9 +172,10 @@ facts.
 | `summary` | PreToolUse Bash/PowerShell `: team-summary '<json>'` | `task`, `goal`, `produced`, `decisions`, `open`, `review_min?` (int), each ≤ 200 chars; the Chief's 5 lines |
 | `task_done` | PreToolUse `: team-done` when allowed | `task`, `version` |
 | `helper_start` | PreToolUse Agent | `tuid`, `helper` (subagent_type), `label` (description ≤ 60), `bg` (bool), `version` (task version at launch) |
-| `helper_paired` | SubagentStart | `agent_id`, `helper`, `tuid` (the pending `helper_start` it was paired with, §6.2) |
-| `helper_end` | SubagentStop (once per `agent_id`) | `agent_id`, `helper`, `status?` |
-| `verdict` | a reviewer's hand-back (§6.2), once per `agent_id` | `task`, `agent_id`, `helper`, `verdict` ∈ `READY` `NEEDS_CHANGES` `ESCALATE`, `version` (task version at the reviewer's launch), `findings` (int) |
+| `helper_paired` | SubagentStart (once per run: a resumed helper pairs again with `tuid: null`) | `agent_id`, `helper`, `tuid` (the pending `helper_start` it was paired with, §6.2; null for a resumed helper) |
+| `helper_resume` | PreToolUse SendMessage (main session only, target's previous run ended) | `task`, `agent_id`, `helper` |
+| `helper_end` | SubagentStop (once per run) | `agent_id`, `helper`, `status?` |
+| `verdict` | a reviewer's hand-back (§6.2), once per run (a resumed reviewer gives a new one) | `task`, `agent_id`, `helper`, `verdict` ∈ `READY` `NEEDS_CHANGES` `ESCALATE`, `version` (task version at the reviewer's launch), `findings` (int) |
 | `auto` | PreToolUse `: team-auto <marker>` (first command of an automatic session) | `marker` |
 | `ignored` | a `: team-*` command from a helper, or a grant from a non-interactive entry (the entry rule applies to grants only: automatic sessions must be able to run `: team-auto`) | `what` (≤ 60) |
 | `tamper` | any hook run that finds the installed config's mode ≠ the last `mode` event | `found`, `expected` |
@@ -217,11 +218,21 @@ Task-opening rules:
   (2026-10-10) = the task's most recent reviewer verdict is READY and that READY covers the latest main-session version
   (`last_verified >= version`) AND whose reviewer was LAUNCHED after the latest NEEDS CHANGES arrived (a reviewer started
   in parallel with the failing one cannot clear it: A and B launched together, A answers NEEDS CHANGES, B answers READY =
-  still unresolved). The hook keeps `last_verdict`, `last_verdict_seq` (the launch order of the reviewer), `nc_at` (how
+  still unresolved). A reviewer the main session RESUMES with SendMessage after the NEEDS CHANGES counts as launched at
+  the resume: the hook emits `helper_resume {task, agent_id, helper}` when a SendMessage from the main session (not from
+  a helper, and not a refused user-only command) has `to` equal to the `agent_id` of a helper already paired in this
+  session whose previous run has ENDED (`ended_ids`; a still-running helper, a helper sender or an unknown `to` changes
+  nothing). It bumps `spawn_seq` and gives that agent the new `seq`, and, like a fresh launch, the current `version` and
+  `task`. The resumed helper's next SubagentStart keeps its pairing (it never claims a pending launch) and re-opens its
+  verdict capture; a stale SubagentStop replayed before that is not a verdict. Only verdicts arriving after the resume
+  use the new seq; earlier ones are never resurrected. `derive` mirrors it: a `helper_resume` counts as a new
+  launch of that `agent_id`, and a resumed helper's later verdict is not dropped as a duplicate. The hook keeps `last_verdict`, `last_verdict_seq` (the launch order of the reviewer), `nc_at` (how
   many helpers had been launched when the latest NEEDS CHANGES arrived; kept across a carry) and `spawn_seq`; `pending`
   and `agents` entries carry `seq`. `derive` mirrors it from the order of `helper_start` events (a helper's launch id, or
   its `agent_id` through `helper_paired`). Honest limits: a READY on an unrelated artifact, or from a reviewer that was
-  told to answer READY, still counts.
+  told to answer READY, still counts. Also: a foreground reviewer's SubagentStop and PostToolUse can race around a
+  resume (the first to land is the verdict); a SubagentStop replayed after the resumed run's SubagentStart is taken for
+  the new run's verdict; resuming a non-reviewer only bumps `spawn_seq`.
   The main session's `version` counts only edits made in the main session (helpers edit in their own worktrees), so a
   count of NEEDS CHANGES with `version` 0 is NOT proof of an unresolved task. A task opened by a carry has no verdict
   yet, so it is unresolved and the next declaration carries again (the double-declaration escape stays closed) until a
@@ -303,7 +314,7 @@ crew from their phases, verdicts from `review` events, status `done` when merged
   "started": "...", "ended": "...", "duration_s": 5400, "status": "done",
   "crew": ["implementer", "test-runner", "reviewer"],
   "helpers": [{"helper": "implementer", "count": 2, "labels": ["Build ledger store"]}],
-  "rounds": {"needs_changes": 1, "budget": 2, "granted": 0, "left": 1},
+  "rounds": {"needs_changes": 1, "budget": 2, "granted": 0, "left": 1, "own": 1, "carried": 0},
   "verdicts": [{"t": "...", "helper": "reviewer", "verdict": "NEEDS_CHANGES", "version": 4, "findings": 3}],
   "final_verdict": "READY", "checked": true, "unverified_flag": false,
   "caught": 3, "edits": 9, "refusals": [{"guard": "rework", "would": true}],
@@ -313,6 +324,12 @@ crew from their phases, verdicts from `review` events, status `done` when merged
 }
 ```
 
+* `rounds.own` = this task's own NEEDS CHANGES rounds, `rounds.carried` = rounds carried over from the previous unresolved
+  task in the session (`needs_changes` = carried + own; `left` = budget + granted - needs_changes).
+* `title` = the task's name: summary `goal`, else the first helper's first label (the description the main session gave it),
+  else the session title, else null. The tasks endpoints (§5.2) replace it with `plan_title` when that resolves, so the field
+  is the one name to show; `session_title` stays for a muted second line. A v1 job that never finished is `ended`
+  (v1 is retired), with `ended` = its last event.
 * `plan_ref` = the opening event's `plan_ref` (null when none). The tasks endpoints (§5.2) add `plan_title` to EVERY task: the
   Plan item's current title when the ref resolves (read-only, via `cockpit/plan/refs.py`, finished project-plan tasks included), else null.
   The Ledger tasks table shows a linked task as a muted "Plan:" prefix plus that title (its own name as the hover hint), so cost per Plan item is visible.
@@ -383,7 +400,7 @@ from `areas.yaml`) and `--v1-grid`, plus `color-scheme: dark`. Dark only:
 ```
 
 *(Amended at the screen review 2026-10-09.)* `--m-*` are flat stand-ins for the Team creatures' gradients
-(Chief = Opus violet, Builder/Analyst/Inspector = Sonnet deep blue, Scout/Lab Tech/Clerk = Haiku
+(orchestrator = Opus violet, implementer/researcher/reviewer = Sonnet deep blue, scout/test-runner/sweeper = Haiku
 teal-green) and are used by the Team timeline and every Ledger chart and legend. `--cat-1` to `--cat-8`
 are the categorical family for charts (shades of blue, violet and pink, "same theme, still
 differentiable"). Both sets pass `tools/vendor/validate_palette.js --mode dark --surface "#000000"`
@@ -467,10 +484,9 @@ name and task label, the helper pipeline shows it as working, and `/api/v2/atten
 not waiting. When the last helper finishes and the conversation is idle, the session returns to waiting or idle.
 
 Lane 2 may make **additive** changes to `cockpit/teamlive.py` (new fields only: `cwd` per session,
-status `waiting` = idle with the last main-session event a Stop, within 2 h) and add one function to
-`dashboard/usage.py` (`window_by_model()`, now unused by the shell; deduped by `(message.id, requestId)`), with tests. Nothing
-else in those files changes. Note: v1 `usage.collect`/`window_spend` over-count ~3.7× (one usage line
-per content block); left as is in v1, recorded in the build log.
+status `waiting` = idle with the last main-session event a Stop, within 2 h). The window split `usage.window_by_model()` once planned here was removed 2026-10-11 with the rest of the usage-window code. Nothing
+else in those files changes. Note: `usage.collect` over-counts ~3.7× (one usage line
+per content block); left as is, recorded in the build log.
 
 ### 5.2 Ledger (Lane 1, `cockpit/ledger2/api.py`)
 
@@ -690,7 +706,8 @@ lines after the first that start with `-`, `*` or `<digit>.`
 version}`. SubagentStart (carries `agent_id`, `agent_type`) pairs with the **oldest unclaimed pending
 entry of the same helper type** (the rule `teamlive` already uses, commit cc25e80) and logs
 `helper_paired`. If the pairing is ambiguous, use the lowest pending version of that type: that can
-cause a false send-back, never a false pass. "A real reviewer verdict was captured" is an explicit
+cause a false send-back, never a false pass. An `agent_id` already paired never claims a pending entry (a resumed
+helper logs `helper_paired` with `tuid: null` and keeps its record). "A real reviewer verdict was captured" is an explicit
 pass condition of the record day (§6.7).
 
 ### 6.3 Rework guard
@@ -1058,7 +1075,7 @@ timeline and layout around them follow B (the timeline uses `timelineLanes` with
 as in the chart kit's "Team · today" example, flat `--m-*` colours that match the creatures). A session row reads
 "title · type of work · area chip" (no folder or project text); when the session declared a Plan item (`plan_ref`, §1.2)
 and it resolves, the row shows that item's title instead (`plan_title`, e.g. "Product: write the onboarding email"; each
-session in `GET /api/v2/team` carries `plan_ref` and `plan_title`, both null when none); timeline rows carry `{sid, label, type, cost, segs}`. A session working only because of helpers (`via_helpers`, §5.1) shows a line "working · N helper(s) in the background" with the helper names and labels instead of reading idle. Data: `GET /api/v2/team` every 2 s, repaint only when the JSON changed. Under the strip, a collapsed-by-default "Roster" section (`team-roster.js`, open state in localStorage) loads `GET /api/v2/shell/roster` on first open and shows helpers, types of work and playbooks as hairline tables. The Chief row in the helpers table is a fixed client-side row (the main session has no agent file).
+session in `GET /api/v2/team` carries `plan_ref` and `plan_title`, both null when none); timeline rows carry `{sid, label, type, cost, segs}`. A session working only because of helpers (`via_helpers`, §5.1) shows a line "working · N helper(s) in the background" with the helper names and labels instead of reading idle. Data: `GET /api/v2/team` every 2 s, repaint only when the JSON changed. Under the strip, a collapsed-by-default "Roster" section (`team-roster.js`, open state in localStorage) loads `GET /api/v2/shell/roster` on first open and shows helpers, types of work and playbooks as hairline tables. The orchestrator row in the helpers table (columns Name, Model, Use it for, Never) is a fixed client-side row (the main session has no agent file).
 
 ### 8.4a Plan screen: the operator's time only (2026-10-10)
 `screens/plan*.js`. The week view is seven day columns of the operator's time (events, read-only project placements,
@@ -1087,6 +1104,14 @@ changed anything?, Context, Afterwards, Reading (coloured by level: alert = the 
 warning token, info = muted); notes follow below the facts, muted and labelled as unverified (§5.2). The
 command text is not shown anywhere (it is not stored). Model colours
 are `--m-*` everywhere (charts and legends).
+*(2026-10-11, readability.)* The task table reads at a glance: the name is `title` (session title as a muted second
+line when different); the column "Rework rounds" shows "{own} of {budget}" (budget null = "no budget"), plus
+" +N granted" and a muted second line "N carried over"; statuses read in plain words (open = in progress, done = closed,
+ended = session ended, switched = next task started); a READY task never also reads "Refused, over budget". Crew and
+helper names on this screen are the roster names (`rosterName` in `kit/format.js`: chief = orchestrator, the eight agent
+ids as they are, unknown types as they are); the Team screen (creature strip, session rows, roster table) uses them too: one name per helper,
+the persona names are gone (the creature artwork and its internal keys are unchanged). Every task-table header and the "Rung" header carry a hover tooltip (`#tip`);
+the two KPIs "Caught by the checks" and "Weighted usage" carry a muted subtitle. Bypass paths show with single forward slashes.
 
 ---
 

@@ -1,24 +1,7 @@
-# ---- Runtime state / dispatcher artifacts (not source) ----
-logs/
-jobs/
-worktrees/
-ledger/
-
-# ---- Never commit a key, wherever it lands ----
-*.pem
-*.key
-
-# ---- Python ----
 __pycache__/
-*.py[cod]
-*$py.class
 .pytest_cache/
-.mypy_cache/
-.venv/
-venv/
-env/
-
-# ---- OS / editor ----
-.DS_Store
-Thumbs.db
-*.swp
+*.pyc
+node_modules/
+*.db
+*.log
+.env*

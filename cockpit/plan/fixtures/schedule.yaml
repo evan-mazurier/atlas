@@ -1,0 +1,140 @@
+# ATLAS GLOBAL SCHEDULE: SYNTHETIC test fixture (invented events, no real calendar).
+#
+# Holds the operator's availability + each task's intra-day PLACEMENT. Placements REFERENCE project tasks
+# (project + task + session); the task itself is single-sourced in that project's plan.yaml.
+
+availability:
+  blocks: []      # hour-level, e.g. { day: 2026-07-20, start: "14:00", end: "16:00" }
+  full_days: []   # whole-day, e.g. 2026-07-19
+
+# PLACEMENTS: one entry per work session of a task. The `session` id must match a `sessions:` entry
+# on the referenced task in its plan.yaml.
+placements:
+- session: sess_41d8e7a6
+  project: client-app
+  task: onboarding-flow
+  day: '2026-08-28'
+  start: 09:00
+  end: 09:45
+  pinned: true
+- session: sess_2f619cea
+  project: client-app
+  task: review-demo
+  day: '2026-09-15'
+  start: 08:00
+  end: 09:45
+  pinned: true
+
+events:
+- id: evt_3c81f5a2
+  title: Library visit
+  day: '2026-06-12'
+  type: personal
+- id: evt_5d2a8c41
+  title: Hike with a friend
+  day: '2026-06-08'
+  type: personal
+  recur:
+    freq: daily
+    interval: 1
+    until: '2026-06-12'
+  skips:
+  - '2026-06-08'
+  - '2026-06-09'
+  - '2026-06-10'
+  - '2026-06-11'
+  - '2026-06-12'
+- id: evt_9e4f2b17
+  title: Weekend trip
+  day: '2026-06-19'
+  type: personal
+  recur:
+    freq: daily
+    interval: 1
+    until: '2026-06-26'
+- id: evt_2b6d0f93
+  title: Morning routine and breakfast
+  day: '2026-05-25'
+  type: personal
+  start: 06:00
+  end: 08:00
+  recur:
+    freq: daily
+    interval: 1
+    until: '2026-05-28'
+  skips:
+  - '2026-05-25'
+- id: evt_6f1a9d34
+  title: Breakfast
+  day: '2026-08-01'
+  type: personal
+  start: 08:30
+  end: 09:30
+  recur:
+    freq: daily
+    interval: 1
+    until: '2026-08-12'
+  overrides:
+    '2026-08-03':
+      start: 07:00
+      end: 08:00
+    '2026-08-05':
+      start: 07:00
+      end: 08:00
+- id: evt_c47e2085
+  title: Lunch break
+  day: '2026-08-01'
+  type: personal
+  start: '12:00'
+  end: '13:30'
+  recur:
+    freq: daily
+    interval: 1
+    until: '2026-08-12'
+  skips:
+  - '2026-08-02'
+  - '2026-08-09'
+  overrides:
+    '2026-08-01':
+      start: '12:30'
+      end: '17:30'
+    '2026-08-03':
+      start: '11:00'
+      end: '13:00'
+    '2026-08-04':
+      start: '12:30'
+      end: '13:30'
+- id: evt_8a05d6c3
+  title: Dentist
+  day: '2026-09-02'
+  type: personal
+  start: '15:00'
+  end: '16:00'
+  notes: 'Bring the insurance card.'
+- id: evt_d82b64e1
+  title: 'Review the plan and start the helpers'
+  day: '2026-09-24'
+  type: personal
+  start: '13:30'
+  end: '16:30'
+work_blocks:
+- id: blk_a3d19e50
+  day: '2026-08-25'
+  start: 09:00
+  end: '12:00'
+  label: Tue morning
+- id: blk_b7c2480d
+  day: '2026-08-26'
+  start: 09:00
+  end: '12:00'
+  label: Wed morning
+- id: blk_e5f06a1b
+  day: '2026-08-26'
+  start: '13:00'
+  end: '17:30'
+  label: Wed afternoon
+- id: blk_f10c93d7
+  day: '2026-09-15'
+  start: 08:00
+  end: '12:00'
+  label: Demo review session

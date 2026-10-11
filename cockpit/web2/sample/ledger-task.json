@@ -1,0 +1,153 @@
+{
+ "ok": true,
+ "task": {
+  "id": "abcd0001-1",
+  "src": "v2",
+  "sid": "sample-sid-1",
+  "session_title": "Claude Code team panel",
+  "title": "Claude Code team panel",
+  "area": "atlas",
+  "type": "coding",
+  "playbook": null,
+  "auto": false,
+  "started": "2026-10-09T09:11:00+02:00",
+  "ended": "2026-10-09T10:21:00+02:00",
+  "duration_s": 3900,
+  "status": "done",
+  "crew": [
+   "chief",
+   "implementer",
+   "test-runner",
+   "reviewer"
+  ],
+  "helpers": [
+   {
+    "helper": "implementer",
+    "count": 1,
+    "labels": [
+     "Claude Code team panel"
+    ]
+   },
+   {
+    "helper": "test-runner",
+    "count": 1,
+    "labels": [
+     "Claude Code team panel"
+    ]
+   },
+   {
+    "helper": "reviewer",
+    "count": 1,
+    "labels": [
+     "Claude Code team panel"
+    ]
+   }
+  ],
+  "rounds": {
+   "needs_changes": 2,
+   "budget": 2,
+   "granted": 0,
+   "left": 0
+  },
+  "verdicts": [
+   {
+    "t": "2026-10-09T10:11:00+02:00",
+    "helper": "reviewer",
+    "verdict": "READY",
+    "version": 4,
+    "findings": 7
+   }
+  ],
+  "final_verdict": "READY",
+  "checked": true,
+  "unverified_flag": false,
+  "caught": 7,
+  "edits": 9,
+  "refusals": [],
+  "cost": {
+   "weighted": 1200000,
+   "by_model": {
+    "claude-opus-5-5": {
+     "in": 1000,
+     "out": 9000,
+     "cache_read": 0,
+     "cache_write": 0,
+     "weighted": 720000
+    },
+    "claude-sonnet-5-5": {
+     "in": 1000,
+     "out": 9000,
+     "cache_read": 0,
+     "cache_write": 0,
+     "weighted": 480000
+    }
+   },
+   "by_helper": {
+    "chief": 720000,
+    "implementer": 160000,
+    "test-runner": 160000,
+    "reviewer": 160000
+   }
+  },
+  "summary": {
+   "goal": "Claude Code team panel",
+   "produced": "Sample output of the task",
+   "decisions": "Sample decision",
+   "open": "Nothing open",
+   "review_min": 20
+  }
+ },
+ "events": [
+  {
+   "v": 2,
+   "t": "2026-10-09T09:11:00+02:00",
+   "ev": "work_type",
+   "sid": "sample-sid-1",
+   "cwd": "<repo>",
+   "type": "coding",
+   "area": "atlas",
+   "task": "abcd0001-1",
+   "mode": "record"
+  },
+  {
+   "v": 2,
+   "t": "2026-10-09T09:20:00+02:00",
+   "ev": "helper_start",
+   "sid": "sample-sid-1",
+   "helper": "implementer",
+   "label": "Build the team panel",
+   "bg": false,
+   "task": "abcd0001-1"
+  },
+  {
+   "v": 2,
+   "t": "2026-10-09T10:05:00+02:00",
+   "ev": "verdict",
+   "sid": "sample-sid-1",
+   "helper": "reviewer",
+   "verdict": "NEEDS_CHANGES",
+   "version": 3,
+   "findings": 4,
+   "task": "abcd0001-1"
+  },
+  {
+   "v": 2,
+   "t": "2026-10-09T10:31:00+02:00",
+   "ev": "verdict",
+   "sid": "sample-sid-1",
+   "helper": "reviewer",
+   "verdict": "READY",
+   "version": 4,
+   "findings": 0,
+   "task": "abcd0001-1"
+  },
+  {
+   "v": 2,
+   "t": "2026-10-09T10:33:00+02:00",
+   "ev": "task_done",
+   "sid": "sample-sid-1",
+   "task": "abcd0001-1",
+   "version": 4
+  }
+ ]
+}

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude Code team — live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Atlas cockpit tokens (styles.css :root) so this reads as a sibling of Finance / Inbox. */
+:root{
+  --bg:#08070a; --bg2:#0e0c11; --card:#121016; --card2:#16131b;
+  --line:rgba(155,92,255,.16); --line-hot:rgba(155,92,255,.55);
+  --accent:#9b5cff; --accent-deep:#6d28d9; --accent-soft:#c4a0ff;
+  --danger:#ff2b3d; --danger-soft:#ff647a;
+  --green:#2fe3a0; --amber:#ffb020; --blue:#5ad1ff;
+  --txt:#f3eef2; --muted:#8b8390; --dim:#5c5563;
+  --haiku:#4FD8C8; --sonnet:#7C9BFF; --opus:#C77DFF;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--txt);font-family:'Inter',system-ui,sans-serif;font-size:15px}
+body{padding:18px 16px 40px}
+body.embed{padding:12px 14px 28px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:16px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 20px;border-bottom:1px solid var(--line);padding-bottom:12px}
+header h1{font-family:'Space Grotesk';font-weight:700;font-size:26px;letter-spacing:.14em;margin:0;text-transform:uppercase}
+header .sub{color:var(--muted);font-size:13px;margin-top:4px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-family:'JetBrains Mono';font-size:12px;border:1px solid var(--line);border-radius:99px;padding:4px 10px;color:var(--muted)}
+.chip b{color:var(--txt);font-weight:500}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--dim);margin-right:6px}
+.live-dot.on{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* team strip */
+.strip{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-wrap:wrap;gap:6px 4px;justify-content:center}
+.mem{position:relative;width:86px;display:grid;justify-items:center;gap:2px;opacity:.38;transition:opacity .3s}
+.mem.busy{opacity:1}
+.mem .a{width:50px;height:50px}
+.mem .n{font-family:'Space Grotesk';font-size:12px}
+.mem .c{position:absolute;top:-4px;right:8px;font-family:'JetBrains Mono';font-size:11px;background:var(--accent);color:#08070a;border-radius:99px;padding:0 6px;display:none}
+.mem.busy .c{display:block}
+
+/* lanes */
+.lanes{display:grid;gap:12px}
+.lane{background:var(--card);border:1px solid var(--line);border-radius:16px;display:grid;grid-template-columns:minmax(0,230px) 1fr;gap:12px 18px;padding:14px 16px;align-items:center}
+.lane.hot{border-color:var(--line-hot);box-shadow:0 0 26px -12px var(--accent)}
+.info{display:grid;gap:5px;min-width:0}
+.info .ty{font-family:'Space Grotesk';font-weight:700;font-size:19px;overflow-wrap:anywhere}
+.info .wk{font-family:'Space Grotesk';font-weight:500;font-size:14px;color:var(--accent-soft)}
+.tag{font-family:'JetBrains Mono';font-size:11.5px;color:var(--accent-soft);border:1px solid var(--line);border-radius:6px;padding:2px 7px;justify-self:start}
+.tag.ask{color:var(--muted)}
+.meta{font-size:12.5px;color:var(--muted);line-height:1.5}
+.meta b{color:var(--txt);font-weight:500}
+.flow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 0;min-width:0}
+.st{width:104px;display:grid;justify-items:center;gap:3px;text-align:center;transition:opacity .3s}
+.st .a{width:54px;height:54px}
+.st .n{font-family:'Space Grotesk';font-weight:500;font-size:13px}
+.st .d{font-size:11.5px;color:var(--muted);line-height:1.25;min-height:2.5em;max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.st .s{font-family:'JetBrains Mono';font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+.st.done{opacity:.45} .st.done .s{color:var(--green)}
+.st.wait{opacity:.32} .st.wait .s{color:var(--dim)}
+.st.work .s{color:var(--accent-soft)}
+.st.work .a{filter:drop-shadow(0 0 10px rgba(155,92,255,.55))}
+.ar{align-self:center;margin-top:-34px;width:22px;height:2px;background:var(--line);position:relative;overflow:hidden}
+.ar.live{background:var(--line-hot)}
+.ar.live::after{content:"";position:absolute;top:0;left:-8px;width:8px;height:2px;background:var(--accent-soft);animation:run 1.1s linear infinite}
+@keyframes run{to{left:24px}}
+.idle{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:9px 14px;color:var(--dim);font-size:13px}
+.idle b{font-family:'Space Grotesk';color:var(--muted);font-weight:500}
+
+/* empty + error states */
+.empty{background:var(--card);border:1px dashed var(--line);border-radius:16px;padding:26px 18px;display:grid;justify-items:center;gap:6px;text-align:center}
+.empty .a{width:64px;height:64px;opacity:.55}
+.empty .t{font-family:'Space Grotesk';font-weight:700;font-size:18px}
+.empty .s{color:var(--muted);font-size:13px}
+.err{border:1px solid rgba(255,43,61,.5);color:var(--danger-soft);border-radius:10px;padding:8px 12px;font-size:13px;background:rgba(255,43,61,.06)}
+[hidden]{display:none!important}
+
+/* timeline */
+.tl{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 16px;display:grid;gap:10px}
+.tl h2{font-family:'Space Grotesk';font-size:15px;letter-spacing:.12em;text-transform:uppercase;margin:0;color:var(--muted)}
+.row{display:grid;grid-template-columns:minmax(0,190px) 1fr minmax(0,110px);gap:12px;align-items:center;font-size:13px}
+.row .l{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{position:relative;height:14px;background:var(--bg2);border-radius:4px;overflow:hidden}
+.seg{position:absolute;top:0;bottom:0;border-radius:3px}
+.row .cost{font-family:'JetBrains Mono';font-size:12px;text-align:right;color:var(--muted)}
+.axis{display:grid;grid-template-columns:minmax(0,190px) 1fr minmax(0,110px);gap:12px;font-family:'JetBrains Mono';font-size:10.5px;color:var(--dim)}
+.axis .t{display:flex;justify-content:space-between}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.note{font-size:12px;color:var(--dim);margin:0}
+.tl-empty{color:var(--dim);font-size:13px}
+
+/* creature motion (same as the org chart) */
+.hop,.shade,.lid,.look,.px{transform-box:fill-box}
+.hop{transform-origin:50% 100%}
+.work .hop,.busy .hop{animation:hop var(--d,1.4s) ease-in-out var(--dl,0s) infinite}
+.lid{transform-origin:50% 50%;animation:blink var(--b,5s) linear var(--bl,0s) infinite}
+.work .look,.busy .look{animation:look 3s ease-in-out infinite}
+.work .px,.busy .px{animation:rise 1.6s ease-out infinite}
+.px{opacity:0}
+@keyframes hop{0%,100%{transform:translateY(0) scale(1,1)}12%{transform:scale(1.08,.9)}28%{transform:translateY(-8px) scale(.94,1.08)}42%{transform:translateY(0) scale(1.07,.92)}55%{transform:rotate(-4deg)}65%{transform:rotate(4deg)}75%{transform:rotate(-2deg)}85%{transform:rotate(0)}}
+@keyframes blink{0%,90%,100%{transform:scaleY(1)}93%{transform:scaleY(.08)}96%{transform:scaleY(1)}}
+@keyframes look{0%,100%{transform:translate(0,0)}30%{transform:translate(-3px,-1px)}65%{transform:translate(3px,1px)}}
+@keyframes rise{0%{transform:translateY(3px);opacity:0}25%{opacity:1}100%{transform:translateY(-10px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.hop,.lid,.look,.px,.ar.live::after,.live-dot{animation:none!important}}
+@media (max-width:760px){.lane{grid-template-columns:1fr}.row,.axis{grid-template-columns:1fr}.row .cost{text-align:left}}
+
+/* Pinned top: title, counters and the team strip stay in view; the session lanes scroll beneath.
+   The negative margin lets the pin's own background cover the body's top padding while stuck. */
+.pin{position:sticky;top:0;z-index:10;display:grid;gap:14px;background:var(--bg);
+  margin-top:-18px;padding-top:18px;padding-bottom:12px;
+  /* full-bleed: the band's background runs the whole width of the page/frame, not just the content
+     column, so lane cards (and their glow) passing underneath never show at its sides */
+  box-shadow:0 0 0 100vmax var(--bg);clip-path:inset(-18px -100vmax -16px -100vmax)}
+.pin::after{content:"";position:absolute;left:-100vmax;right:-100vmax;bottom:-16px;height:16px;
+  background:linear-gradient(var(--bg),transparent);pointer-events:none}
+body.embed .pin{margin-top:-12px;padding-top:12px;clip-path:inset(-12px -100vmax -16px -100vmax)}
+/* the full-bleed band must not create sideways scrolling; `clip` (not hidden) keeps sticky working */
+html,body{overflow-x:clip}
+/* Narrow screens: the strip becomes one sideways-scrolling row so the pinned part stays short */
+@media (max-width:760px){
+  .strip{flex-wrap:nowrap;overflow-x:auto;justify-content:flex-start}
+  .mem{flex:0 0 72px}
+}
+
+/* Themed scrollbars: thin, violet thumb, no track — matches the cockpit */
+html{scrollbar-width:thin;scrollbar-color:rgba(155,92,255,.45) transparent}
+.strip{scrollbar-width:thin;scrollbar-color:rgba(155,92,255,.35) transparent}
+::-webkit-scrollbar{width:8px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(155,92,255,.45);border-radius:99px}
+::-webkit-scrollbar-thumb:hover{background:rgba(155,92,255,.75)}
+</style></head>
+<body><div class="wrap">
+  <div class="pin">
+  <header>
+    <div><h1>Claude Code team</h1>
+      <div class="sub">Live view of Claude Code desktop sessions — not Atlas dispatches (those stay in Pulse / Sessions).</div></div>
+    <div class="chips">
+      <span class="chip"><span class="live-dot" id="dot"></span><b id="nSess">0</b> <span id="nSessLbl">sessions working</span></span>
+      <span class="chip"><b id="nAg">0</b> agents active</span>
+      <span class="chip">today <b id="nCost">0</b> tok · Sonnet-eq</span>
+    </div>
+  </header>
+
+  <div class="err" id="err" hidden></div>
+  <div class="strip" id="strip"></div>
+  </div>
+  <div class="lanes" id="lanes"></div>
+
+  <div class="tl">
+    <h2>Today</h2>
+    <div class="axis"><span></span><span class="t" id="axis"></span><span></span></div>
+    <div id="tl"></div>
+    <div class="legend"><span><i style="background:var(--opus)"></i>Opus (Chief, Senior Partner)</span><span><i style="background:var(--sonnet)"></i>Sonnet</span><span><i style="background:var(--haiku)"></i>Haiku</span><span><i style="background:var(--dim)"></i>idle</span></div>
+    <p class="note">Cost = price-weighted tokens (Sonnet = 1), from the same usage meter as the Ledger.</p>
+  </div>
+</div>
+
+<script>
+(function(){
+  if (window.self !== window.top) document.body.classList.add("embed");
+  const T = {
+    op:{name:"Operator",tier:"human"}, chief:{name:"Chief",tier:"opus"}, scout:{name:"Scout",tier:"haiku"}, clerk:{name:"Clerk",tier:"haiku"},
+    analyst:{name:"Analyst",tier:"sonnet"}, builder:{name:"Builder",tier:"sonnet"}, writer:{name:"Writer",tier:"sonnet"},
+    labtech:{name:"Lab Tech",tier:"haiku"}, inspector:{name:"Inspector",tier:"sonnet"}, partner:{name:"Senior Partner",tier:"opus"}
+  };
+  const G = {haiku:["#33E3C2","#2F7BFF"], sonnet:["#3D86FF","#6B4DFF"], opus:["#8B4DFF","#E040FB"]};
+  const SHAPE = {
+    chief:{d:"M12 36H88C88 61 71 79 50 79S12 61 12 36Z",e:[50,55,13],h:"bar",px:[[36,24,5],[46,16,6],[58,26,4],[66,19,5]]},
+    scout:{d:"M50 12C59 30 75 43 75 60A25 25 0 0 1 25 60C25 43 41 30 50 12Z",e:[50,62,11],h:"dot",px:[[64,10,4],[70,18,3]]},
+    clerk:{d:"M20 76C8 76 8 58 19 55C19 40 36 36 44 45C50 34 69 34 73 47C87 45 93 61 85 72C83 76 79 76 75 76Z",e:[39,61,10],h:"bar",px:[[26,26,4],[34,18,5],[42,28,3],[50,22,4]]},
+    analyst:{d:"M28 82C28 52 33 26 54 22C71 19 78 34 71 47C85 55 91 71 89 82Z",e:[55,38,9],h:"slant",px:[[50,8,4],[58,12,5],[64,4,3]]},
+    builder:{d:"M22 30H78L71 70C69 79 60 84 50 84S31 79 29 70Z",e:[50,66,10],h:"flat",px:[[40,18,4],[48,12,6],[60,20,4]]},
+    writer:{d:"M63 15C81 27 83 56 67 74C58 83 40 85 30 77C21 70 24 58 34 54C46 50 52 40 52 30C52 21 56 15 63 15Z",e:[45,64,9],h:"dot",px:[[70,6,3],[76,12,4]]},
+    labtech:{d:"M50 20A26 25 0 1 1 49.9 20ZM38 66H62V80H38Z",e:[50,45,12],h:"dot",px:[[30,14,4],[38,8,3],[66,12,5]]},
+    inspector:{d:"M50 14L81 25V50C81 67 69 79 50 87C31 79 19 67 19 50V25Z",e:[50,49,12],h:"bar",px:[[44,4,4],[54,6,3]]},
+    partner:{d:"M25 85V46C25 29 36 17 50 17S75 29 75 46V85Z",e:[50,46,12],h:"slant",px:[[42,6,4],[50,2,5],[58,7,3]]}
+  };
+  const ORDER = ["op","chief","scout","clerk","analyst","builder","writer","labtech","inspector","partner"];
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  // Creature art. The random-looking motion phases come from a hash of a stable key (not a counter), so a
+  // creature that is redrawn keeps its own rhythm instead of jumping to a new one every poll.
+  let uid = 0;
+  function hash(s){ let h = 2166136261; for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; }
+  function creature(id, key){
+    const s = SHAPE[id], g = G[T[id].tier], k = "g" + (uid++), [ex,ey,er] = s.e;
+    const hl = {bar:`<rect x="${ex-2}" y="${ey-er*.6}" width="4" height="${er*1.2}" rx="2" fill="#fff"/>`,
+      dot:`<circle cx="${ex+er*.35}" cy="${ey-er*.1}" r="${er*.32}" fill="#fff"/>`,
+      slant:`<rect x="${ex-1.8}" y="${ey-er*.6}" width="3.6" height="${er*1.2}" rx="1.8" fill="#fff" transform="rotate(-45 ${ex} ${ey})"/>`,
+      flat:`<rect x="${ex-er*.6}" y="${ey-1.6}" width="${er*1.2}" height="3.2" rx="1.6" fill="#fff"/>`}[s.h];
+    const r = n => hash(key + ":" + n);
+    const px = s.px.map(([x,y,z],i) => `<rect class="px" style="animation-delay:${(i*.45)%1.6}s" x="${x}" y="${y}" width="${z}" height="${z}" fill="${g[i%2]}"/>`).join("");
+    return `<svg viewBox="0 0 100 100" style="--d:${(1.2+r(1)*.5).toFixed(2)}s;--dl:${(-r(2)*2).toFixed(2)}s;--b:${(4+r(3)*3).toFixed(2)}s;--bl:${(-r(4)*5).toFixed(2)}s;overflow:visible" aria-hidden="true">
+      <defs><linearGradient id="${k}" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="${g[0]}"/><stop offset="1" stop-color="${g[1]}"/></linearGradient>
+      <filter id="${k}f" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter></defs>
+      <ellipse cx="50" cy="94" rx="26" ry="4" fill="${g[0]}" opacity=".45" filter="url(#${k}f)"/>
+      <g class="hop">${px}<path d="${s.d}" fill="url(#${k})"/><g class="lid"><circle cx="${ex}" cy="${ey}" r="${er}" fill="#05060A"/><g class="look">${hl}</g></g></g></svg>`;
+  }
+  function human(){
+    return `<svg viewBox="0 0 100 100" aria-hidden="true"><path d="M18 92C19 74 32 64 50 64S81 74 82 92Z" fill="#2a2f40"/><path d="M43 64L50 73L57 64" fill="none" stroke="#9b5cff" stroke-width="2"/><rect x="44" y="52" width="12" height="13" rx="4" fill="#D9A47E"/><ellipse cx="50" cy="39" rx="17" ry="19" fill="#E8B996"/><path d="M33 37C32 23 41 17 51 17C61 17 69 23 67 36C64 29 58 26 50 26C42 26 37 29 33 37Z" fill="#3A2A1E"/><circle cx="43.5" cy="41" r="2" fill="#1B1F23"/><circle cx="56.5" cy="41" r="2" fill="#1B1F23"/><path d="M44 49C47.5 52 52.5 52 56 49" fill="none" stroke="#1B1F23" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  const art = (id, key) => id === "op" ? human() : (SHAPE[id] ? creature(id, key) : "");
+  const tokens = n => { n = Number(n) || 0; return n >= 1e6 ? (n/1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n/1e3) + "k" : String(n); };
+
+  const $ = id => document.getElementById(id);
+  const strip = $("strip"), lanesEl = $("lanes");
+  strip.innerHTML = ORDER.map(id => `<div class="mem" data-id="${id}"><span class="c"></span><span class="a">${art(id, "strip-" + id)}</span><span class="n">${T[id].name}</span></div>`).join("");
+
+  /* ── lanes: one element per session, repainted only when that session's own data changed, so the
+        creatures keep animating across polls ── */
+  function laneHtml(L){
+    const steps = L.steps.map((x, j) => {
+      const st = x.state === "working" ? "work" : x.state;                    // done | work | wait
+      const prev = j ? (L.steps[j-1].state === "working" ? "work" : L.steps[j-1].state) : null;
+      const arrow = j ? `<span class="ar${(prev === "done" || prev === "work") && st === "work" ? " live" : ""}"></span>` : "";
+      const label = st === "done" ? "done" : st === "work" ? "working" : "next";
+      return arrow + `<div class="st ${st}"><span class="a">${art(x.agent, L.sid + ":" + j + ":" + x.agent)}</span><span class="n">${(T[x.agent]||{}).name || esc(x.agent)}</span><span class="d">${esc(x.what)}</span><span class="s">${label}</span></div>`;
+    }).join("");
+    // The session's sidebar title leads (it is how a person matches a lane to a Claude session); the type of
+    // work sits under it. With no title, the type leads as before.
+    const head = L.title
+      ? `<span class="ty">${esc(L.title)}</span><span class="wk">${esc(L.type)}</span>`
+      : `<span class="ty">${esc(L.type)}</span>`;
+    return `<div class="info">${head}<span class="tag${L.ask ? " ask" : ""}">${esc(L.tag)}</span>
+      <span class="meta">${esc(L.project)} · since <b>${esc(L.since)}</b><br>so far <b>${tokens(L.cost)}</b> tok</span></div><div class="flow">${steps}</div>`;
+  }
+  function idleHtml(L){
+    return L.title
+      ? `<b>${esc(L.title)}</b><span>${esc(L.type)} · ${esc(L.project)}</span><span>idle since ${esc(L.idle_since)}</span>`
+      : `<b>${esc(L.type)}</b><span>${esc(L.project)}</span><span>idle since ${esc(L.idle_since)}</span>`;
+  }
+  function emptyHtml(){
+    return `<span class="a">${creature("chief", "empty")}</span><span class="t">No Claude Code session working right now</span><span class="s">This view fills in as soon as a Claude Code desktop session starts a task.</span>`;
+  }
+  function paintLanes(sessions){
+    const want = [];
+    if (!sessions.some(s => s.status === "working")) want.push({key: "~empty", cls: "empty", html: emptyHtml(), sig: "empty"});
+    sessions.forEach(s => {
+      const working = s.status === "working";
+      want.push({key: s.sid, cls: working ? "lane hot" : "idle", html: working ? laneHtml(s) : idleHtml(s),
+                 sig: JSON.stringify([s.status, s.title, s.type, s.tag, s.project, s.since, s.idle_since, s.cost, s.steps])});
+    });
+    const have = new Map();
+    Array.from(lanesEl.children).forEach(c => have.set(c.dataset.key, c));
+    const keep = new Set(want.map(w => w.key));
+    have.forEach((el, k) => { if (!keep.has(k)) el.remove(); });
+    want.forEach((w, i) => {
+      let el = have.get(w.key);
+      if (!el) { el = document.createElement("div"); el.dataset.key = w.key; }
+      if (el.dataset.sig !== w.sig) { el.className = w.cls; el.innerHTML = w.html; el.dataset.sig = w.sig; }
+      if (lanesEl.children[i] !== el) lanesEl.insertBefore(el, lanesEl.children[i] || null);
+    });
+  }
+
+  /* ── timeline ── */
+  const C = {opus:"var(--opus)", sonnet:"var(--sonnet)", haiku:"var(--haiku)", idle:"var(--dim)"};
+  let tlSig = "";
+  function paintTimeline(tl){
+    const sig = JSON.stringify(tl);
+    if (sig === tlSig) return;
+    tlSig = sig;
+    const a0 = tl.start, span = Math.max(1, tl.end - tl.start);
+    const hours = []; for (let h = tl.start; h <= tl.end; h++) hours.push(h);
+    $("axis").innerHTML = hours.map(h => `<span>${String(h % 24).padStart(2, "0")}:00</span>`).join("");
+    $("tl").innerHTML = tl.rows.length ? tl.rows.map(r => `<div class="row"><span class="l" title="${esc(r.label)}">${esc(r.label)}</span><span class="bar">${
+      r.segs.map(([a, b, t]) => `<span class="seg" style="left:${Math.max(0, (a - a0) / span * 100)}%;width:${Math.max((b - a) / span * 100, .6)}%;background:${C[t] || C.idle};opacity:${t === "idle" ? .5 : .9}"></span>`).join("")
+    }</span><span class="cost">${tokens(r.cost)}</span></div>`).join("") : `<div class="tl-empty">No Claude Code activity recorded today.</div>`;
+  }
+
+  /* ── one poll → one paint; the page scroll is restored after the repaint ── */
+  let lastSig = "";
+  function paint(d){
+    const y = window.scrollY;
+    $("err").hidden = true;
+    $("nSess").textContent = d.working;
+    $("nSessLbl").textContent = d.working === 1 ? "session working" : "sessions working";
+    $("dot").classList.toggle("on", d.working > 0);
+    $("nAg").textContent = d.active;
+    $("nCost").textContent = tokens(d.cost);
+    strip.querySelectorAll(".mem").forEach(m => {
+      const n = (d.counts || {})[m.dataset.id] || 0;
+      m.classList.toggle("busy", n > 0);
+      m.querySelector(".c").textContent = "×" + n;
+    });
+    paintLanes(d.sessions);
+    paintTimeline(d.timeline);
+    if (window.scrollY !== y) window.scrollTo(0, y);
+  }
+  async function poll(){
+    try {
+      const r = await fetch("/api/team-live", {cache: "no-store"});
+      const d = await r.json();
+      if (!d || d.ok === false) throw new Error((d && d.error) || "no data");
+      const sig = JSON.stringify(d);
+      if (sig !== lastSig) { lastSig = sig; paint(d); }
+    } catch (e) {
+      const el = $("err");
+      el.textContent = "The team log could not be read (" + (e && e.message || e) + "). Showing the last view; retrying.";
+      el.hidden = false;
+    }
+  }
+  paintLanes([]);
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+</body></html>

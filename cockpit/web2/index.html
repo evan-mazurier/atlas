@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Atlas</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="256x256" href="/icon-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/look.css">
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/screens/team.css">
+<link rel="stylesheet" href="/screens/ledger.css">
+<link rel="stylesheet" href="/screens/plan.css">
+</head>
+<body>
+<header class="abar" id="abar">
+  <div class="ab-l"><b>Atlas</b><span id="ab-date"></span></div>
+  <div class="ab-r">
+    <span class="ab-err" id="ab-err" hidden></span>
+    <span class="chip" id="ab-team-err" hidden title="The team log could not be read, so the session counts may be wrong"><span class="dot" style="color:var(--warn)">&#x25CF;</span> Team log unreadable</span>
+    <span class="chip" id="ab-working"><span class="dot" style="color:var(--ok)">&#x25CF;</span> <span id="ab-working-t">0 sessions working</span></span>
+    <span class="chip" id="ab-waiting" hidden><span class="dot" style="color:var(--warn)">&#x25CF;</span> <span id="ab-waiting-t">0 waiting</span></span>
+    <span class="chip" id="ab-review"><span class="dot" style="color:var(--accent)">&#x25CF;</span> <span id="ab-review-t">0 pending review</span></span>
+  </div>
+</header>
+<div class="shell">
+  <nav class="nav" id="nav" aria-label="Screens"></nav>
+  <main id="screen"></main>
+</div>
+<div id="tip" role="tooltip"></div>
+<div id="toasts"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

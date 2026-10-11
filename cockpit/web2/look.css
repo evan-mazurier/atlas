@@ -1,0 +1,15 @@
+/* Atlas v2 look: tokens only (docs/v2/contracts.md §4). Checked by tools/check_look.py.
+   Area colours (--a-<id>) are not here: app.js sets them from areas.yaml at boot. */
+:root{
+  color-scheme:dark;
+  --bg:#000000; --panel:#0a0a0a; --line:#1f1f1f; --grid:#1a1a1a; --axis:#333333;
+  --ink:#ededed; --ink-2:#a1a1a1; --muted:#8f8f8f; --accent:#3291ff;
+  --data:#3987e5;
+  --m-opus:#a66ff2; --m-sonnet:#2c58dc; --m-haiku:#1fa88f;   /* flat stand-ins for the creature gradients (Opus violet, Sonnet deep blue, Haiku teal-green) */
+  --cat-1:#379bec; --cat-2:#f90dd1; --cat-3:#314df5; --cat-4:#ce7499; --cat-5:#9769fc; --cat-6:#bb0a71; --cat-7:#08629c; --cat-8:#9c0dc8;   /* categorical shades: blues, violets, pinks (Finance) */
+  --pos:#3987e5; --neg:#e66767;
+  --ctx-1:#9a9a9a; --ctx-2:#6f6f6f;
+  --ok:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+  --f-ui:"Geist",system-ui,-apple-system,"Segoe UI",sans-serif; --f-mono:"Geist Mono",ui-monospace,Consolas,monospace;
+  --r-1:3px; --r-2:6px; --r-3:8px; --gap:12px; --pad:16px;
+}

@@ -1,0 +1,86 @@
+/* Team screen (docs/v2/contracts.md §8.4). Layout and text follow design B (var(--...) only);
+   the creature motion between the markers is copied from the v1 page. */
+.team-in{max-width:1200px;margin-inline:auto;display:grid;gap:var(--gap)}
+.team-err{border:1px solid var(--crit);border-radius:var(--r-2);padding:8px 12px;font-size:13px}
+.team-strip{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-3);padding:10px 12px;display:flex;flex-wrap:wrap;gap:6px 4px;justify-content:center}
+.team-mem{position:relative;width:86px;display:grid;justify-items:center;gap:2px;opacity:.38;transition:opacity .3s}
+.team-mem.busy{opacity:1}
+.team-mem .a{width:50px;height:50px}
+.team-mem .n{font-size:12px;color:var(--ink-2)}
+.team-mem .c{position:absolute;top:-4px;right:8px;font:11px var(--f-mono);background:var(--accent);color:var(--bg);border-radius:99px;padding:0 6px;display:none}
+.team-mem.busy .c{display:block}
+.team-lanes{display:grid;gap:var(--gap)}
+.team-lane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-3);display:grid;grid-template-columns:minmax(0,230px) 1fr;gap:12px 18px;padding:14px 16px;align-items:center}
+.team-lane.hot{border-color:var(--axis)}
+.team-info{display:grid;gap:5px;min-width:0}
+.team-info .ty{font:600 15px var(--f-ui);overflow-wrap:anywhere}
+.team-info .wk{font-size:13px;color:var(--ink-2)}
+.team-area{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.team-tag{font:11.5px var(--f-mono);color:var(--ink-2);border:1px solid var(--line);border-radius:var(--r-2);padding:2px 7px;justify-self:start}
+.team-tag.ask{color:var(--muted)}
+.team-meta{font-size:12px;color:var(--muted);line-height:1.5}
+.team-meta b{color:var(--ink);font-weight:500;font-family:var(--f-mono)}
+.team-flow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 0;min-width:0}
+.team-st{width:104px;display:grid;justify-items:center;gap:3px;text-align:center;transition:opacity .3s}
+.team-st .a{width:54px;height:54px}
+.team-st .n{font-weight:500;font-size:13px}
+.team-st .d{font-size:11.5px;color:var(--muted);line-height:1.25;min-height:2.5em;max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.team-st .s{font:10.5px var(--f-mono);letter-spacing:.06em;text-transform:uppercase}
+.team-st.done{opacity:.45}
+.team-st.done .s{color:var(--ok)}
+.team-st.wait{opacity:.32}
+.team-st.wait .s{color:var(--muted)}
+.team-st.work .s{color:var(--ink)}
+.team-st.work .a{filter:drop-shadow(0 0 10px color-mix(in srgb,var(--accent) 55%,transparent))}
+.team-ar{align-self:center;margin-top:-34px;width:22px;height:2px;background:var(--line);position:relative;overflow:hidden}
+.team-ar.live{background:var(--axis)}
+.team-ar.live::after{content:"";position:absolute;top:0;left:-8px;width:8px;height:2px;background:var(--ink-2);animation:run 1.1s linear infinite}
+@keyframes run{to{left:24px}}
+.team-idle{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-3);padding:9px 14px;color:var(--muted);font-size:13px}
+.team-idle b{color:var(--ink-2);font-weight:500}
+.team-wait{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.team-via{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.team-via-names{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.team-empty{background:var(--panel);border:1px dashed var(--line);border-radius:var(--r-3);padding:26px 18px;display:grid;justify-items:center;gap:6px;text-align:center}
+.team-empty .a{width:64px;height:64px;opacity:.55}
+.team-empty .t{font-weight:600;font-size:16px}
+.team-empty .s{color:var(--muted);font-size:13px}
+@media (max-width:760px){
+  .team-lane{grid-template-columns:1fr}
+  .team-strip{flex-wrap:nowrap;overflow-x:auto;justify-content:flex-start}
+  .team-mem{flex:0 0 72px}
+}
+@media (prefers-reduced-motion:reduce){.team-ar.live::after{animation:none !important}}
+
+/* creatures: verbatim from v1 */
+/* creature motion (same as the org chart) */
+.hop,.shade,.lid,.look,.px{transform-box:fill-box}
+.hop{transform-origin:50% 100%}
+.work .hop,.busy .hop{animation:hop var(--d,1.4s) ease-in-out var(--dl,0s) infinite}
+.lid{transform-origin:50% 50%;animation:blink var(--b,5s) linear var(--bl,0s) infinite}
+.work .look,.busy .look{animation:look 3s ease-in-out infinite}
+.work .px,.busy .px{animation:rise 1.6s ease-out infinite}
+.px{opacity:0}
+@keyframes hop{0%,100%{transform:translateY(0) scale(1,1)}12%{transform:scale(1.08,.9)}28%{transform:translateY(-8px) scale(.94,1.08)}42%{transform:translateY(0) scale(1.07,.92)}55%{transform:rotate(-4deg)}65%{transform:rotate(4deg)}75%{transform:rotate(-2deg)}85%{transform:rotate(0)}}
+@keyframes blink{0%,90%,100%{transform:scaleY(1)}93%{transform:scaleY(.08)}96%{transform:scaleY(1)}}
+@keyframes look{0%,100%{transform:translate(0,0)}30%{transform:translate(-3px,-1px)}65%{transform:translate(3px,1px)}}
+@keyframes rise{0%{transform:translateY(3px);opacity:0}25%{opacity:1}100%{transform:translateY(-10px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.hop,.lid,.look,.px,.ar.live::after,.live-dot{animation:none!important}}
+/* end creatures */
+
+/* roster: collapsible tables under the strip */
+.team-roster{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-3);padding:6px 12px}
+.roster-toggle{display:flex;align-items:center;gap:8px;background:none;border:0;padding:6px 0;color:var(--ink-2);font:400 11px var(--f-mono);text-transform:uppercase;letter-spacing:.06em;cursor:pointer}
+.roster-toggle:hover{color:var(--ink)}
+.roster-toggle .chev{width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s}
+.roster-toggle[aria-expanded="true"] .chev{transform:rotate(45deg)}
+.roster-body{padding:4px 0 10px;font-size:12px;color:var(--ink-2)}
+.roster-body h4{margin:14px 0 4px;font:400 11px var(--f-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.roster-tbl{min-width:640px}
+.roster-tbl th{padding:6px 12px 6px 0;font-size:10.5px}
+.roster-tbl td{padding:6px 12px 6px 0;font-size:12px;color:var(--ink-2);vertical-align:top}
+.roster-tbl td b{color:var(--ink);font-weight:500}
+.roster-tbl .mono{font-family:var(--f-mono);font-size:11.5px}
+.roster-helpers td:nth-child(4),.roster-helpers td:nth-child(5){min-width:240px;max-width:420px}
+.roster-model{display:inline-flex;align-items:center;gap:6px;font:400 11.5px var(--f-mono)}
+.roster-model i{width:7px;height:7px;border-radius:2px;display:inline-block}

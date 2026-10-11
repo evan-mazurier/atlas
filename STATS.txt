@@ -1,0 +1,3 @@
+Python lines (excluding tests): 10908
+Test functions (python + node): 731
+Design doc lines (docs/): 1182

@@ -1,0 +1,13 @@
+{
+  "mode": "record",
+  "ledger_dir": null,
+  "workflows_file": "<repo>\\workflows.yaml",
+  "areas_file": "<repo>\\areas.yaml",
+  "weights": [["haiku-5", 0.05], ["haiku", 0.5], ["opus", 2.0], ["sonnet", 1.0]],
+  "haiku5_tier_prompt": 100000,
+  "haiku5_high_weight": 0.25,
+  "interactive_entries": [],
+  "_note_interactive_entries": "[] = the fixed fallback set [\"cli\", \"claude-desktop\", \"claude-vscode\"] (never any entry): grants and /ack-break are honoured only from these entries. A non-empty list replaces the set.",
+  "exempt_dirs": [],
+  "exempt_temp": true
+}

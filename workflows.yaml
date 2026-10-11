@@ -1,0 +1,87 @@
+# Atlas v2: the types of work (docs/v2/scope.html "Workflows and rework budgets"; contracts.md §2).
+# ONE place for each type's crew, rework budget and ladder rung. The hooks read the budgets
+# (installed copy: ~/.claude/hooks/atlas/workflows.json, written by tools/install_hooks.py),
+# the Ledger reads the rungs. Budget = NEEDS CHANGES verdicts allowed before builders are refused.
+default_budget: 2
+builders: [implementer, drafter, researcher, sweeper]   # the helpers a refused rework stops
+reviewers: [reviewer, senior-reviewer]
+types:
+  coding:
+    label: Coding
+    crew: [implementer, test-runner, reviewer]
+    budget: 2
+    rung: "2"
+    needs_check: true
+    move: "80 % first-pass READY over 20 tasks: budget 1"
+  research:
+    label: Research
+    crew: [sweeper, researcher]
+    budget: 2
+    rung: "2"
+    needs_check: false      # a check is required only when the research changed files
+    move: "10 clean source checks in a row: spot checks"
+  writing:
+    label: Writing
+    crew: [drafter, reviewer]
+    budget: 2
+    rung: "2"
+    needs_check: true
+    move: "Stays: always sent by hand"
+  legal:
+    label: Legal or money
+    crew: [researcher, drafter, senior-reviewer]
+    budget: 0
+    rung: "1.5"
+    needs_check: true
+    move: "Never moves: always decided by hand"
+  chore:
+    label: Chore
+    crew: [implementer, sweeper, reviewer]
+    budget: 1
+    rung: "2"
+    needs_check: true
+    move: "Already closes itself"
+  quick-question:
+    label: Quick question
+    crew: [scout]
+    budget: null            # no rework: the type cannot change files
+    rung: "1"
+    needs_check: false
+    move: "Stays: every answer is read"
+  playbook:
+    label: Playbook
+    crew: []                # set per playbook: see playbook_crews below
+    budget: 2               # the default for a playbook that states none
+    rung: "-"
+    needs_check: false
+    move: "Per playbook"
+  undeclared:
+    label: Undeclared
+    crew: []
+    budget: 2
+    rung: "-"
+    needs_check: true       # edits made with no declared type: flagged if never checked
+    move: "Declare a type"
+aliases: {legal-money: legal, money: legal, quick: quick-question, question: quick-question}
+# Slash commands that open a playbook task (besides those listed under an area in areas.yaml).
+playbooks: [daily-review, start-of-day, end-of-day, tune-up, weekly-report, launch-auto]
+# Per-playbook crew and rework budget, read off each playbook's own skill text (not invented).
+# `budget` is omitted when the skill states none (the playbook then inherits types.playbook.budget).
+# `per_task: true` = the playbook starts other work and the crew is that task's type (types above);
+# `crew` then lists only the helpers the skill names itself. `playbooks` above stays a plain name list:
+# the installed hook copy reads it as one.
+playbook_crews:
+  daily-review:
+    crew: [sweeper, researcher, drafter, reviewer]
+  start-of-day:
+    crew: [sweeper, researcher, drafter, implementer, reviewer, senior-reviewer]
+  end-of-day:
+    crew: [sweeper, reviewer, senior-reviewer]
+  tune-up:
+    crew: [sweeper, drafter, implementer, reviewer, senior-reviewer]
+  weekly-report:
+    crew: []
+    budget: null            # no helpers, so nothing to rework
+  launch-auto:
+    crew: [reviewer]
+    per_task: true

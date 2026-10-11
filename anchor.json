@@ -1,0 +1,5 @@
+{
+  "url": "git@github.com:example/atlas-anchor.git",
+  "branch": "main",
+  "clone": "~/atlas-anchor"
+}

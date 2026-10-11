@@ -1,0 +1,55 @@
+# Atlas v2: the areas. ONE short file, the only place an area is defined (docs/v2/contracts.md §3).
+# This is an EXAMPLE set: replace the names, folders and keywords with your own.
+# Add an area = add one entry. The order below is the colour order the colour-blind check was run on;
+# keep new areas at the end. Edits pass `py -3.12 tools/check_look.py areas.yaml` instead of a review.
+#
+#   id       short stable key (lowercase, used in CSS as --a-<id>, in the ledger and in schedule.yaml)
+#   name     what the screens show
+#   color    hex, checked against the black surface for colour-blind safety
+#   folders  optional: work in these folders belongs to this area (longest prefix wins)
+#   playbooks optional: slash commands whose tasks belong to this area
+#   projects optional: registry.yaml project ids whose plan.yaml tasks belong to this area
+#   match    optional: schedule events without an explicit area get this one. {title_prefix: [...], keywords: [...]}:
+#            a prefix the title starts with (checked first, all areas), else a whole word anywhere in the title
+#            (case and accents ignored). First area in file order wins; an explicit area always wins.
+#   group    optional: the Claude desktop sidebar group for this area's sessions
+areas:
+  - id: md
+    name: Product
+    color: "#d95926"
+    folders: ['D:\AI\product', 'D:\AI\product-site', 'D:\AI\product-site-draft']
+    playbooks: [start-of-day, end-of-day]
+    match: {title_prefix: ["Product"]}
+    group: Product
+  - id: job
+    name: Research
+    color: "#199e70"
+    folders: ['D:\AI\research', 'D:\AI\reading-list']
+    playbooks: [daily-review]
+    match: {keywords: [Paper]}
+    group: Research
+  - id: train
+    name: Learning
+    color: "#c98500"
+    folders: ['D:\AI\learning-app', 'D:\AI\learning-brand']
+    projects: [learning-app, learning-brand]
+    match: {keywords: [Study, Course, Lecture, Workshop, Seminar, Tutorial, Lab]}
+    group: Learning
+  - id: atlas
+    name: Ops
+    color: "#9085e9"
+    folders: ['D:\AI\Atlas', 'D:\AI\Atlas-v2', 'D:\AI\atlas-data', 'D:\AI\atlas-public']
+    playbooks: [tune-up, weekly-report]
+    match: {keywords: [Atlas]}
+    group: Ops
+  - id: admin
+    name: Admin
+    color: "#008300"
+    folders: ['D:\AI\client-app', 'D:\AI\consulting', 'D:\Documents\administrative', 'D:\Documents\accounts']
+    projects: [consulting, client-app]
+    match: {keywords: [Tax, Invoice, Bank]}
+    group: Admin
+  - id: pers
+    name: Personal
+    color: "#d55181"
+    group: Personal

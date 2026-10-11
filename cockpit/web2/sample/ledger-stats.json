@@ -1,0 +1,356 @@
+{
+ "ok": true,
+ "week": "2026-W41",
+ "kpis": {
+  "tasks_closed": {
+   "value": 23,
+   "prev": 18,
+   "spark": [
+    14,
+    16,
+    15,
+    18,
+    17,
+    19,
+    18,
+    21,
+    20,
+    22,
+    18,
+    23
+   ]
+  },
+  "first_pass_ready_pct": {
+   "value": 61,
+   "prev": 57,
+   "spark": [
+    48,
+    52,
+    50,
+    55,
+    53,
+    57,
+    56,
+    58,
+    57,
+    59,
+    57,
+    61
+   ]
+  },
+  "caught": {
+   "value": 14,
+   "prev": 11,
+   "spark": [
+    6,
+    8,
+    7,
+    9,
+    8,
+    10,
+    9,
+    11,
+    12,
+    11,
+    11,
+    14
+   ]
+  },
+  "rework_refused": {
+   "value": 1,
+   "prev": 0,
+   "split": {
+    "enforced": 0,
+    "would": 1
+   },
+   "spark": [
+    0,
+    1,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    1
+   ]
+  },
+  "weighted_usage": {
+   "value": 6200000,
+   "prev": 6750000,
+   "spark": [
+    6800000,
+    7100000,
+    6900000,
+    7400000,
+    6600000,
+    7000000,
+    6500000,
+    6900000,
+    6700000,
+    6400000,
+    6750000,
+    6200000
+   ]
+  }
+ },
+ "usage_by_day": [
+  {
+   "day": "2026-09-26",
+   "opus": 200000,
+   "sonnet": 140000,
+   "haiku": 30000
+  },
+  {
+   "day": "2026-09-27",
+   "opus": 150000,
+   "sonnet": 120000,
+   "haiku": 30000
+  },
+  {
+   "day": "2026-09-28",
+   "opus": 520000,
+   "sonnet": 380000,
+   "haiku": 70000
+  },
+  {
+   "day": "2026-09-29",
+   "opus": 610000,
+   "sonnet": 450000,
+   "haiku": 80000
+  },
+  {
+   "day": "2026-09-30",
+   "opus": 440000,
+   "sonnet": 400000,
+   "haiku": 60000
+  },
+  {
+   "day": "2026-10-01",
+   "opus": 700000,
+   "sonnet": 550000,
+   "haiku": 90000
+  },
+  {
+   "day": "2026-10-02",
+   "opus": 580000,
+   "sonnet": 470000,
+   "haiku": 80000
+  },
+  {
+   "day": "2026-10-03",
+   "opus": 220000,
+   "sonnet": 170000,
+   "haiku": 40000
+  },
+  {
+   "day": "2026-10-04",
+   "opus": 180000,
+   "sonnet": 140000,
+   "haiku": 30000
+  },
+  {
+   "day": "2026-10-05",
+   "opus": 710000,
+   "sonnet": 520000,
+   "haiku": 90000
+  },
+  {
+   "day": "2026-10-06",
+   "opus": 770000,
+   "sonnet": 520000,
+   "haiku": 100000
+  },
+  {
+   "day": "2026-10-07",
+   "opus": 610000,
+   "sonnet": 390000,
+   "haiku": 70000
+  },
+  {
+   "day": "2026-10-08",
+   "opus": 710000,
+   "sonnet": 490000,
+   "haiku": 90000
+  },
+  {
+   "day": "2026-10-09",
+   "opus": 650000,
+   "sonnet": 410000,
+   "haiku": 70000
+  }
+ ],
+ "time_by_area": [
+  {
+   "area": "md",
+   "hours": 18.5
+  },
+  {
+   "area": "job",
+   "hours": 6
+  },
+  {
+   "area": "train",
+   "hours": 9
+  },
+  {
+   "area": "atlas",
+   "hours": 7.5
+  },
+  {
+   "area": "admin",
+   "hours": 2
+  },
+  {
+   "area": "pers",
+   "hours": 4
+  }
+ ],
+ "rounds_hist": {
+  "0": 28,
+  "1": 13,
+  "2": 5,
+  "refused": 1
+ },
+ "usage_by_helper": [
+  {
+   "helper": "chief",
+   "tier": "opus",
+   "weighted": 2270000
+  },
+  {
+   "helper": "implementer",
+   "tier": "sonnet",
+   "weighted": 1420000
+  },
+  {
+   "helper": "reviewer",
+   "tier": "sonnet",
+   "weighted": 850000
+  },
+  {
+   "helper": "researcher",
+   "tier": "sonnet",
+   "weighted": 570000
+  },
+  {
+   "helper": "senior-reviewer",
+   "tier": "opus",
+   "weighted": 380000
+  },
+  {
+   "helper": "drafter",
+   "tier": "sonnet",
+   "weighted": 280000
+  },
+  {
+   "helper": "sweeper",
+   "tier": "haiku",
+   "weighted": 240000
+  },
+  {
+   "helper": "scout",
+   "tier": "haiku",
+   "weighted": 110000
+  },
+  {
+   "helper": "test-runner",
+   "tier": "haiku",
+   "weighted": 80000
+  }
+ ],
+ "first_pass_by_week": [
+  {
+   "week": "2026-W34",
+   "pct": 44
+  },
+  {
+   "week": "2026-W35",
+   "pct": 48
+  },
+  {
+   "week": "2026-W36",
+   "pct": 52
+  },
+  {
+   "week": "2026-W37",
+   "pct": 47
+  },
+  {
+   "week": "2026-W38",
+   "pct": 55
+  },
+  {
+   "week": "2026-W39",
+   "pct": 58
+  },
+  {
+   "week": "2026-W40",
+   "pct": 57
+  },
+  {
+   "week": "2026-W41",
+   "pct": 61
+  }
+ ],
+ "ladder": [
+  {
+   "type": "quick-question",
+   "label": "Quick question",
+   "rung": "R1",
+   "budget": null,
+   "tasks_4w": 41,
+   "first_pass_pct": null,
+   "move": "Stays: every answer is read"
+  },
+  {
+   "type": "research",
+   "label": "Research",
+   "rung": "R1.5",
+   "budget": 2,
+   "tasks_4w": 12,
+   "first_pass_pct": 75,
+   "move": "10 clean source checks in a row, then spot checks"
+  },
+  {
+   "type": "writing",
+   "label": "Writing",
+   "rung": "R2",
+   "budget": 2,
+   "tasks_4w": 7,
+   "first_pass_pct": 56,
+   "move": "Stays: sending is always manual"
+  },
+  {
+   "type": "coding",
+   "label": "Coding",
+   "rung": "R2",
+   "budget": 2,
+   "tasks_4w": 19,
+   "first_pass_pct": 58,
+   "move": "80 % first-pass over 20 tasks, then budget 1"
+  },
+  {
+   "type": "chore",
+   "label": "Chore",
+   "rung": "R2",
+   "budget": 1,
+   "tasks_4w": 7,
+   "first_pass_pct": 86,
+   "move": "Already closes itself"
+  },
+  {
+   "type": "legal",
+   "label": "Legal or money",
+   "rung": "R1.5",
+   "budget": 0,
+   "tasks_4w": 2,
+   "first_pass_pct": 50,
+   "move": "Never moves: always a manual decision"
+  }
+ ],
+ "unverified": 2
+}

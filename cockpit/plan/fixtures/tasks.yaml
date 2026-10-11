@@ -1,0 +1,20 @@
+# Atlas v2: area tasks and review marks (docs/v2/contracts.md section 5.3). Written by the Plan engine
+# (cockpit/plan/), read by the Plan screen. Tasks that live in a project's own plan.yaml are read
+# from there and are NOT copied here.
+#
+#   tasks: one entry per task that belongs to an area but to no project plan
+#     - id: t_ab12cd34
+#       area: md                     # an id from areas.yaml
+#       title: "Write the outreach follow-up"
+#       state: todo                  # todo | next | doing | review | done
+#       owner: me                    # me | agents
+#       estimate_min: 90
+#       reversible: true
+#       planned: {day: "2026-10-12", start: "09:00", end: "10:30"}   # optional: the slot an agents task is planned in
+#       project: null                # optional
+#
+#   reviews: automatic tasks whose result the operator has reviewed (they leave the review tray)
+#     - {task_id: "abcd1234-2", at: "2026-10-09T14:20:05+02:00"}
+tasks: []
+
+reviews: []

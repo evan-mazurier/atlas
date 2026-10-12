@@ -556,10 +556,10 @@ crew, status, verdict, review_min}]` (automatic sessions' actual time; feeds the
 
 ```json
 {"ok": true, "version": 412, "today": "2026-10-09",
- "areas": [{"id": "md", "name": "Product", "color": "#d95926", "attention": "shared",
-            "attention_fixed": false, "short": "MD"}],
+ "areas": [{"id": "pers", "name": "Personal", "color": "#d55181", "attention": "full",
+            "attention_fixed": false, "short": "PERS"}],
  "events": [{"id": "evt_…", "occurrence": "2026-10-09", "title": "…", "day": "2026-10-09",
-             "start": "10:00", "end": "11:00", "area": "md", "area_source": "explicit|match|none",
+             "start": "10:00", "end": "11:00", "area": "pers", "area_source": "explicit|match|none",
              "attention": "shared|full", "attention_source": "fixed|event|area|default",
              "type": "personal", "recur": null, "notes": null}],
  "placements": [{"session": "sess_…", "project": "…", "task": "…", "day": "…", "start": "…", "end": "…", "area": "train"}],

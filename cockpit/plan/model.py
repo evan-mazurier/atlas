@@ -54,7 +54,7 @@ def project_areas(areas: list[dict]) -> dict:
 
 
 def _fold(text: str) -> str:
-    """Lower-case, accents removed (Impots matches Invoïce)."""
+    """Lower-case, accents removed (Ecole matches École)."""
     return "".join(c for c in unicodedata.normalize("NFKD", str(text or "").lower()) if not unicodedata.combining(c))
 
 

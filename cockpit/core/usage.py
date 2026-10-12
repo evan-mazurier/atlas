@@ -26,7 +26,6 @@ def projects_dir() -> Path | None:
     if os.name == "nt":
         cands.append(Path(os.path.expanduser("~")) / ".claude" / "projects")
     else:
-        cands.append(Path("/mnt~/.claude/projects"))
         cands += list(Path("/mnt/c/Users").glob("*/.claude/projects"))
         cands.append(Path(os.path.expanduser("~")) / ".claude" / "projects")
     return next((c for c in cands if c and c.exists()), None)

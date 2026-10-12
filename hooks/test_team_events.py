@@ -49,3 +49,23 @@ def test_worktype_from_a_helper_is_not_logged(tmp_path):
                "tool_name": "Bash", "tool_input": {"command": ": team-type coding task:t_aaaaaaaa"}}
     subprocess.run([sys.executable, str(HOOK)], input=_j.dumps(payload), text=True, capture_output=True, env=env, timeout=30)
     assert not list((tmp_path / ".claude" / "team-live").glob("events-*.jsonl"))
+
+
+def test_team_done_is_logged_bare(tmp_path):
+    recs = _run(tmp_path, "  : team-done  ")
+    assert recs[-1]["ev"] == "TeamDone" and recs[-1]["sid"] == "s1"
+    assert set(recs[-1]) == {"ts", "ev", "sid", "cwd"}
+
+
+def test_team_done_with_extra_words_or_too_long_is_not_logged(tmp_path):
+    assert _run(tmp_path, ": team-done now") == []
+    assert _run(tmp_path, ": team-done" + " " * 300) == []
+    assert _run(tmp_path, "echo : team-done") == []
+
+
+def test_team_done_from_a_helper_is_not_logged(tmp_path):
+    env = dict(os.environ, USERPROFILE=str(tmp_path), HOME=str(tmp_path))
+    payload = {"hook_event_name": "PreToolUse", "session_id": "s1", "cwd": str(tmp_path), "agent_id": "A1",
+               "tool_name": "PowerShell", "tool_input": {"command": ": team-done"}}
+    subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True, capture_output=True, env=env, timeout=30)
+    assert not list((tmp_path / ".claude" / "team-live").glob("events-*.jsonl"))

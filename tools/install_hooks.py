@@ -64,7 +64,7 @@ def build_config(repo: Path, existing: dict | None) -> dict:
     if existing:
         if existing.get("mode") in ("record", "enforce"):
             cfg["mode"] = existing["mode"]          # re-install never flips the mode
-        for k in ("interactive_entries", "exempt_dirs", "ledger_dir"):
+        for k in ("interactive_entries", "exempt_dirs", "ledger_dir", "plan_url"):
             if k in existing:
                 cfg[k] = existing[k]
     return cfg

@@ -18,9 +18,10 @@
 
 /* timelines */
 .plan-tl .tl-m{min-width:640px}
-.plan-surface{cursor:crosshair}
+.plan-surface{cursor:default}
 .plan-surface.drop{outline:1px solid var(--accent);outline-offset:-1px}
 .plan-blk{user-select:none;-webkit-user-select:none}
+.plan-blk.done{opacity:.5}
 .plan-blk.editable{cursor:grab;touch-action:none}
 .plan-blk.dragging{cursor:grabbing;z-index:5;filter:brightness(1.15)}
 .plan-blk.ro{color:var(--ink)}
@@ -32,8 +33,6 @@
 .plan-h.t,.plan-h.b{left:0;right:0;height:7px;cursor:ns-resize}
 .plan-h.t{top:0}
 .plan-h.b{bottom:0}
-.plan-ghost{border:1px dashed var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);pointer-events:none;z-index:4}
-.plan-ghost .bs{color:var(--ink)}
 .plan-off{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--grid) 0 1px,transparent 1px 6px);pointer-events:none;opacity:.8}
 .plan-off-v{position:absolute;left:0;right:0;bottom:0;background:repeating-linear-gradient(135deg,var(--grid) 0 1px,transparent 1px 6px);pointer-events:none;opacity:.8}
 .plan-empty-lane{position:absolute;inset:0;display:flex;align-items:center;padding-left:12px;color:var(--muted);font-size:12px;pointer-events:none}
@@ -72,13 +71,12 @@
 .plan-blk.tiny,.plan-blk.one{flex-direction:row;align-items:baseline;gap:6px}
 .plan-blk.tiny .bs,.plan-blk.one .bs{display:block}
 .plan-blk.tiny .bt,.plan-blk.one .bt{display:block;white-space:nowrap;text-overflow:ellipsis;-webkit-line-clamp:unset}
-/* very short blocks: true start, minimum one readable row, drawn above neighbours (only the visual size changes) */
+/* very short blocks: true start, minimum one readable row in the week, drawn above neighbours (only the visual size changes).
+   The day view keeps the true length: no minimum width, the label clips and the tooltip carries the rest. */
 .plan-blk.v{min-height:18px}
 .plan-blk.tiny{z-index:2}
-.plan-blk.tiny:not(.v):not(.plan-ghost){min-width:72px}
+.plan-blk.tiny:not(.v) .bt{text-overflow:clip}
 .plan-blk.dragging{z-index:5}
-.plan-ghost{border-color:var(--accent)}
-.plan-ghost .bs{order:0}
 .plan-wk-now{position:absolute;left:0;right:0;height:1px;background:var(--accent);pointer-events:none;z-index:3}
 .plan-op{position:absolute;left:0;top:0;bottom:0;right:0}
 
@@ -142,8 +140,6 @@
 .plan-grp{display:grid;gap:6px}
 .plan-grp-h{display:flex;gap:8px;align-items:baseline;font:11px var(--f-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .plan-task{min-width:0;border:1px solid var(--line);border-left:3px solid var(--c,var(--line));border-radius:var(--r-2);padding:6px 8px;display:grid;gap:4px}
-.plan-task.drag{cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}
-.plan-task.drag:hover{border-color:var(--axis);border-left-color:var(--c,var(--axis))}
 .plan-task.lift{opacity:.5}
 .plan-task.done .plan-task-t{color:var(--muted);text-decoration:line-through}
 .plan-task-t{font-size:13px;overflow-wrap:anywhere}
@@ -166,3 +162,8 @@
 /* tasks by state: five columns */
 .plan-cols.by-state>.plan-scol{flex-basis:220px;width:220px}
 .plan-scol{min-width:0;border-top:2px solid var(--axis);padding-top:8px;display:grid;gap:8px;align-content:start}
+.plan-blk.third .bs{display:none}
+.plan-blk.third .bt{white-space:nowrap;overflow:hidden;text-overflow:clip}
+.plan-blk.third:not(.v){padding-left:1px;padding-right:1px}
+.plan-blk.third:not(.v) .bt{font-size:10px}   /* a half-hour on the day timeline (~30px) holds a 4-letter tag */
+.plan-tot{margin-top:2px;color:var(--ink-2)}

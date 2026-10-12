@@ -4,7 +4,8 @@
 
 Exit 0 when every file passes, 1 otherwise. `--json` prints {"ok": bool, "problems": [...]}.
 
-areas.yaml : parses; ids unique and ^[a-z][a-z0-9-]{0,15}$; names non-empty; colours #rrggbb; the colours, in
+areas.yaml : parses; ids unique and ^[a-z][a-z0-9-]{0,15}$; names non-empty; attention in {shared, full}, attention_fixed a boolean, short 2 to 5 capitals A-Z
+             (all optional); colours #rrggbb; the colours, in
              file order, pass the five checks of tools/vendor/validate_palette.js in dark mode against the
              surface (--bg of look.css, default #000000): OKLCH lightness band, chroma floor, adjacent-pair
              CVD separation (OKLab delta E x100 >= 8; 6 to 8 is a warning), adjacent-pair normal-vision
@@ -24,6 +25,7 @@ from pathlib import Path
 DEFAULT_BG = "#000000"
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,15}$")
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+SHORT_RE = re.compile(r"^[A-Z]{2,5}$")
 
 COLOR_TOKENS = ["--bg", "--panel", "--line", "--grid", "--axis", "--ink", "--ink-2", "--muted", "--accent",
                 "--data", "--m-opus", "--m-sonnet", "--m-haiku", "--pos", "--neg", "--ctx-1", "--ctx-2",
@@ -141,6 +143,12 @@ def check_areas(path: Path, bg: str = DEFAULT_BG) -> list[str]:
         seen.add(aid)
         if not isinstance(a.get("name"), str) or not a["name"].strip():
             problems.append(f"area {aid}: name is empty")
+        if "attention" in a and a["attention"] not in ("shared", "full"):
+            problems.append(f"area {aid}: attention {a['attention']!r} must be shared or full")
+        if "attention_fixed" in a and not isinstance(a["attention_fixed"], bool):
+            problems.append(f"area {aid}: attention_fixed must be true or false")
+        if "short" in a and not (isinstance(a["short"], str) and SHORT_RE.match(a["short"])):
+            problems.append(f"area {aid}: short {a['short']!r} must be 2 to 5 capital letters A-Z")
         col = a.get("color")
         if not isinstance(col, str) or not HEX_RE.match(col):
             problems.append(f"area {aid}: color {col!r} must be #rrggbb")

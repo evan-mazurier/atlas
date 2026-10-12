@@ -13,17 +13,23 @@
 #            a prefix the title starts with (checked first, all areas), else a whole word anywhere in the title
 #            (case and accents ignored). First area in file order wins; an explicit area always wins.
 #   group    optional: the Claude desktop sidebar group for this area's sessions
+#   attention optional: shared (may run in parallel with other shared blocks, up to 3) or full (overlaps nothing; the default)
+#   attention_fixed optional: true = a single event cannot override the area's attention
+#   short    optional: 2-5 capital letters, the compact label on the Plan
 areas:
   - id: md
     name: Product
     color: "#d95926"
+    attention: shared
+    short: PROD
     folders: ['D:\AI\product', 'D:\AI\product-site', 'D:\AI\product-site-draft']
-    playbooks: [start-of-day, end-of-day]
     match: {title_prefix: ["Product"]}
     group: Product
   - id: job
     name: Research
     color: "#199e70"
+    attention: shared
+    short: RES
     folders: ['D:\AI\research', 'D:\AI\reading-list']
     playbooks: [daily-review]
     match: {keywords: [Paper]}
@@ -31,6 +37,9 @@ areas:
   - id: train
     name: Learning
     color: "#c98500"
+    attention: full
+    attention_fixed: true
+    short: LEARN
     folders: ['D:\AI\learning-app', 'D:\AI\learning-brand']
     projects: [learning-app, learning-brand]
     match: {keywords: [Study, Course, Lecture, Workshop, Seminar, Tutorial, Lab]}
@@ -38,6 +47,8 @@ areas:
   - id: atlas
     name: Ops
     color: "#9085e9"
+    attention: shared
+    short: OPS
     folders: ['D:\AI\Atlas', 'D:\AI\Atlas-v2', 'D:\AI\atlas-data', 'D:\AI\atlas-public']
     playbooks: [tune-up, weekly-report]
     match: {keywords: [Atlas]}
@@ -45,6 +56,8 @@ areas:
   - id: admin
     name: Admin
     color: "#008300"
+    attention: shared
+    short: ADM
     folders: ['D:\AI\client-app', 'D:\AI\consulting', 'D:\Documents\administrative', 'D:\Documents\accounts']
     projects: [consulting, client-app]
     match: {keywords: [Tax, Invoice, Bank]}
@@ -52,4 +65,6 @@ areas:
   - id: pers
     name: Personal
     color: "#d55181"
+    attention: full
+    short: PERS
     group: Personal

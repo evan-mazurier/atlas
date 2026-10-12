@@ -1,7 +1,7 @@
 /* Plan screen: the review tray (right column) and tasks per area. */
 import {
   STATES, STATE_LABELS, groupTasks, isReadOnlyTask, fmtEstimate, reviewLen, EDIT_MIN, EDIT_MAX, snap, clamp, fromMin, dayShort,
-  taskLen, plannedLabel, placeReason, tasksByState,
+  plannedLabel, tasksByState, areaVar, unassignedTasks,
 } from "./plan-core.js";
 import { slotAt, surfaceRect } from "./plan-time.js";
 
@@ -12,7 +12,7 @@ function mk(tag, cls, text, parent) {
   if (parent) parent.appendChild(e);
   return e;
 }
-function areaCol(a) { return a ? "var(--a-" + a + ")" : "var(--ctx-2)"; }
+function areaCol(P, a) { return areaVar(P.ctx.areas, a); }
 
 /* ---------- review tray ---------- */
 export function renderTray(P, host) {
@@ -30,7 +30,7 @@ export function renderTray(P, host) {
     return;
   }
   tray.forEach((it) => {
-    const col = areaCol(it.area);
+    const col = areaCol(P, it.area);
     const card = mk("div", "plan-rv", null, list);
     card.style.setProperty("--c", col);
     mk("i", "plan-rv-bar", null, card);
@@ -52,19 +52,18 @@ export function renderTray(P, host) {
   });
 }
 
-/** Where a dragged card would land: {kind: "me", day, start, end} | {kind: "none", why} | null. */
+/** Where a dragged review card would land: {day, start, end} | null. */
 function dropTarget(P, ev, drag) {
-  const { S } = P;
   const len = drag.len;
   const mine = slotAt(P, ev.clientX, ev.clientY);
   if (mine) {
     const start = clamp(snap(mine.min - len / 2), EDIT_MIN, EDIT_MAX - len);
-    return { kind: "me", day: mine.day, start, end: start + len };
+    return { day: mine.day, start, end: start + len };
   }
   return null;
 }
 
-/** Drag a card (a review or a task) onto the calendar. */
+/** Drag a review card onto the calendar. */
 function cardDrag(P, e0, drag, card) {
   const { S } = P;
   if (S.drag) return;
@@ -92,10 +91,9 @@ function cardDrag(P, e0, drag, card) {
     ev.preventDefault();
     place(ev);
     const t = dropTarget(P, ev, drag);
-    if (t && t.kind === "none") tip.textContent = t.why;
-    else if (t) tip.textContent = dayShort(t.day) + " " + fromMin(t.start) + " to " + fromMin(t.end);
+    if (t) tip.textContent = dayShort(t.day) + " " + fromMin(t.start) + " to " + fromMin(t.end);
     else tip.textContent = "Drop on the calendar";
-    light(t && t.kind === "me" ? (S.surface && S.surface.el) : null);
+    light(t ? (S.surface && S.surface.el) : null);
   };
   const finish = (ev, cancelled) => {
     document.removeEventListener("pointermove", onMove);
@@ -107,10 +105,8 @@ function cardDrag(P, e0, drag, card) {
     card.classList.remove("lift");
     light(null);
     const t = !cancelled && surfaceRect(P) ? dropTarget(P, ev, drag) : null;
-    if (t && t.kind === "none") P.act.notice("Not planned: " + t.why, "warn");
-    else if (t && drag.task) P.act.placeTask(drag.task, t.day, t.start, t.end);
-    else if (t) P.act.scheduleReview(drag.item, t.day, t.start, t.end);
-    else if (!cancelled) P.act.notice(drag.task ? "Drop the task on a free slot in the calendar." : "Drop the review on a free slot in the calendar.", "warn");
+    if (t) P.act.scheduleReview(drag.item, t.day, t.start, t.end);
+    else if (!cancelled) P.act.notice("Drop the review on a free slot in the calendar.", "warn");
     P.dragEnded();
   };
   const onUp = (ev) => finish(ev, false);
@@ -144,7 +140,7 @@ export function buildTaskControls(P, host) {
         const b = mk("button", "plan-achip", null, box);
         b.type = "button";
         b.dataset.area = a.id;
-        mk("i", "sw", null, b).style.background = areaCol(a.id);
+        mk("i", "sw", null, b).style.background = areaCol(P, a.id);
         mk("span", null, a.name, b);
         b.addEventListener("click", () => { S.hiddenAreas[a.id] = !S.hiddenAreas[a.id]; P.paint(); });
       });
@@ -171,16 +167,16 @@ export function renderTasks(P, host) {
   host.classList.toggle("by-state", S.taskGroup === "state");
   if (!areas.length) { mk("div", "plan-rv-empty", "No areas loaded.", host); return; }
   const shown = areas.filter((a) => !S.hiddenAreas[a.id]);
-  if (!shown.length) { mk("div", "plan-rv-empty", "Every area is hidden. Turn one on above.", host); return; }
+  const orphans = unassignedTasks(tasks, areas);
+  if (!shown.length && !orphans.length) { mk("div", "plan-rv-empty", "Every area is hidden. Turn one on above.", host); return; }
   if (S.taskGroup === "state") { renderByState(P, host, tasks, areas); return; }
-  shown.forEach((a) => {
-    const list = tasks[a.id] || [];
+  const column = (key, name, list) => {
     const g = groupTasks(list);
     const col = mk("div", "plan-acol", null, host);
-    col.style.setProperty("--c", areaCol(a.id));
+    col.style.setProperty("--c", areaCol(P, key));
     const hd = mk("div", "plan-acol-h", null, col);
-    mk("i", "sw", null, hd).style.background = areaCol(a.id);
-    mk("b", null, a.name, hd);
+    mk("i", "sw", null, hd).style.background = areaCol(P, key);
+    mk("b", null, name, hd);
     mk("span", "mono muted", String(list.filter((t) => t.state !== "done").length), hd);
     if (!list.length) mk("div", "plan-acol-empty", "No tasks.", col);
     STATES.forEach((st) => {
@@ -191,15 +187,17 @@ export function renderTasks(P, host) {
       mk("span", null, STATE_LABELS[st], gh);
       mk("span", "mono", String(items.length), gh);
       if (st === "done") {
-        const open = !!S.doneOpen[a.id];
+        const open = !!S.doneOpen[key || "unassigned"];
         const tg = mk("button", "plan-link", open ? "Hide" : "Show", gh);
         tg.type = "button";
-        tg.addEventListener("click", () => { S.doneOpen[a.id] = !open; P.paint(); });
+        tg.addEventListener("click", () => { S.doneOpen[key || "unassigned"] = !open; P.paint(); });
         if (!open) return;
       }
-      items.forEach((t) => taskRow(P, grp, Object.assign({ area: a.id }, t), false));
+      items.forEach((t) => taskRow(P, grp, Object.assign({ area: key }, t), false));
     });
-  });
+  };
+  shown.forEach((a) => column(a.id, a.name, tasks[a.id] || []));
+  if (orphans.length) column(null, "Unassigned", orphans);
 }
 
 function renderByState(P, host, tasks, areas) {
@@ -225,9 +223,8 @@ function renderByState(P, host, tasks, areas) {
 
 function taskRow(P, parent, t, withArea) {
   const { ctx } = P;
-  const draggable = t.state !== "done";
-  const row = mk("div", "plan-task" + (t.state === "done" ? " done" : "") + (draggable ? " drag" : ""), null, parent);
-  row.style.setProperty("--c", areaCol(t.area));
+  const row = mk("div", "plan-task" + (t.state === "done" ? " done" : ""), null, parent);
+  row.style.setProperty("--c", areaCol(P, t.area));
   const top = mk("div", "plan-task-t", t.title, row);
   top.title = t.title;
   const meta = mk("div", "plan-task-m", null, row);
@@ -249,12 +246,6 @@ function taskRow(P, parent, t, withArea) {
       items: STATES.map((s) => ({ value: s, label: STATE_LABELS[s] })),
       value: t.state,
       onChange: (v) => { if (v !== t.state) P.act.setTaskState(t, v); },
-    });
-  }
-  if (draggable) {
-    row.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("button, .ui-dd") || (e.pointerType === "mouse" && e.button !== 0)) return;
-      cardDrag(P, e, { task: t, title: t.title, len: taskLen(t) }, row);
     });
   }
 }

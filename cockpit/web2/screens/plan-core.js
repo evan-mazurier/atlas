@@ -7,7 +7,6 @@ export const AXIS_MIN = 420;       // 07:00, left edge of the axis (sleep hours 
 export const AXIS_MAX = 1320;      // 22:00, right edge of the axis
 export const EDIT_MIN = 420;       // the engine refuses events outside 07:00-22:00
 export const EDIT_MAX = 1320;
-export const DEFAULT_LEN = 60;
 
 const p2 = (n) => (n < 10 ? "0" : "") + n;
 
@@ -34,15 +33,6 @@ export function resizeRange(start, end, edge, delta, minLen = SNAP, lo = EDIT_MI
   if (edge === "start") return { start: clamp(snap(start + delta), lo, end - minLen), end };
   return { start, end: clamp(snap(end + delta), start + minLen, hi) };
 }
-/** A range from a press at `a` to a release at `b`. A click (no drag) gives the default length. */
-export function createRange(a, b, lo = EDIT_MIN, hi = EDIT_MAX, len = DEFAULT_LEN) {
-  let s = Math.min(a, b), e = Math.max(a, b);
-  if (Math.abs(b - a) < SNAP) e = s + len;
-  s = clamp(snap(s), lo, hi - SNAP);
-  e = clamp(snap(e), s + SNAP, hi);
-  if (e - s < SNAP) s = e - SNAP;
-  return { start: s, end: e };
-}
 
 /* ---------- geometry ---------- */
 /** Fraction (0..1) of the axis for a minute, clamped. */
@@ -65,11 +55,56 @@ export function inside(surf, x, y) {
   return x >= surf.left && x <= surf.left + surf.width && y >= surf.top && y <= surf.top + surf.height;
 }
 
-/** Row packing for overlapping blocks. items [{start, end}] in minutes -> {row: [..], rows: n}. */
-export function packRows(items) {
-  if (!items.length) return { row: [], rows: 0 };
-  const row = assignLanes(items.map((i) => ({ start: i.start, end: Math.max(i.end, i.start + 1) })));
-  return { row, rows: Math.max(...row) + 1 };
+/** Parallel-planning layout of one day. items [{start, end, full}] in minutes (full = needs full attention).
+    FULL blocks span the whole width. SHARED blocks are packed into tracks (first free track by start) inside
+    their cluster, a cluster being a maximal set of shared blocks connected by overlap; a block's width is
+    1 / (tracks of its cluster). Legacy data where a full block overlaps anything: every block is packed as
+    shared (nothing is hidden). Returns {pos: [{track, tracks, full}], clusters: [{first, tracks, items}],
+    maxTracks (>= 1), legacy}. */
+export function layoutBlocks(items) {
+  const pos = items.map(() => ({ track: 0, tracks: 1, full: false }));
+  const clusters = [];
+  const end = (i) => Math.max(items[i].end, items[i].start + 1);
+  let legacy = false;
+  items.forEach((a, i) => {
+    if (!a.full) return;
+    items.forEach((b, j) => { if (i !== j && a.start < end(j) && b.start < end(i)) legacy = true; });
+  });
+  const shared = [];
+  items.forEach((it, i) => { if (it.full && !legacy) pos[i].full = true; else shared.push(i); });
+  shared.sort((a, b) => items[a].start - items[b].start || end(a) - end(b));
+  let cur = null, curEnd = 0;
+  shared.forEach((i) => {
+    if (!cur || items[i].start >= curEnd) { cur = { first: i, tracks: 1, items: [] }; clusters.push(cur); curEnd = 0; }
+    cur.items.push(i);
+    curEnd = Math.max(curEnd, end(i));
+  });
+  clusters.forEach((c) => {
+    const lane = assignLanes(c.items.map((i) => ({ start: items[i].start, end: end(i) })));
+    c.tracks = Math.max(...lane) + 1;
+    c.items.forEach((i, k) => { pos[i].track = lane[k]; pos[i].tracks = c.tracks; });
+  });
+  return { pos, clusters, maxTracks: Math.max(1, ...clusters.map((c) => c.tracks)), legacy };
+}
+
+/** "6", "6.5": hours with one decimal, `.0` dropped. */
+export function fmtHours(min) { return (Math.round(min / 6) / 10).toFixed(1).replace(/\.0$/, ""); }
+
+/** Day totals over the busy timed SHARED events of `day` (work sessions; full blocks such as training, meals and leisure are left out):
+    work = union of their time, sessions = sum of their durations (minutes). */
+export function dayTotals(events, day) {
+  const spans = (events || [])
+    .filter((e) => e.day === day && e.start && e.end && e.busy !== false && e.attention === "shared")
+    .map((e) => [toMin(e.start), toMin(e.end)])
+    .filter(([a, b]) => a != null && b != null && b > a)
+    .sort((x, y) => x[0] - y[0]);
+  let work = 0, cal = 0, hi = -1;
+  spans.forEach(([a, b]) => {
+    work += b - a;
+    cal += Math.max(0, b - Math.max(a, hi));
+    hi = Math.max(hi, b);
+  });
+  return { work: cal, sessions: work };
 }
 
 /* ---------- dates ---------- */
@@ -146,6 +181,16 @@ export function moveEvent(events, id, occ, to, newId) {
   });
 }
 
+/** Manual done mark on one occurrence (or the one event). */
+export function setDone(events, id, occ, flag) {
+  return events.map((e) => {
+    if (!sameOcc(e, id, e.recur ? occ : null)) return e;
+    const out = Object.assign({}, e);
+    if (flag) out.done = true; else delete out.done;
+    return out;
+  });
+}
+
 /** Patch fields on every occurrence of a series (or the one event). */
 export function patchSeries(events, id, patch) {
   return events.map((e) => {
@@ -216,11 +261,11 @@ export function mineBlocks(data, day) {
   const out = [];
   (data.events || []).forEach((e) => {
     if (e.day !== day || !e.start || !e.end) return;
-    out.push({ kind: e.review_of ? "review" : "mine", ev: e, start: toMin(e.start), end: toMin(e.end), area: e.area, title: e.title });
+    out.push({ kind: e.review_of ? "review" : "mine", ev: e, start: toMin(e.start), end: toMin(e.end), area: e.area, title: e.title, full: e.attention !== "shared" });
   });
   (data.placements || []).forEach((p) => {
     if (p.day !== day || !p.start || !p.end) return;
-    out.push({ kind: "ro", pl: p, start: toMin(p.start), end: toMin(p.end), area: p.area, title: (p.task || "Task") + (p.project ? " (" + p.project + ")" : "") });
+    out.push({ kind: "ro", pl: p, start: toMin(p.start), end: toMin(p.end), area: p.area, full: true, title: (p.task || "Task") + (p.project ? " (" + p.project + ")" : "") });
   });
   return out.filter((b) => b.start != null && b.end != null && b.end > b.start);
 }
@@ -244,43 +289,29 @@ export function recurText(r) {
 }
 
 /* ---------- tasks: planning, grouping ---------- */
-/** Length (minutes) of the slot a task takes when dragged: its estimate (60 when unknown), on the snap grid, inside the day. */
-export function taskLen(t) {
-  const m = t && t.estimate_min > 0 ? t.estimate_min : DEFAULT_LEN;
-  return clamp(Math.ceil(m / SNAP) * SNAP, SNAP, EDIT_MAX - EDIT_MIN);
-}
 /** "planned Mon 10:00" for a card, "" when not planned. */
 export function plannedLabel(p) {
   if (!p || !p.day || !p.start || !parseDay(p.day)) return "";
   return "planned " + dowOf(p.day) + " " + p.start;
-}
-/** Why a task can't be dropped on the calendar; "" when it can. (The agents' lane is parked: contracts.md 5.3.) */
-export function placeReason(task) {
-  if (!task || task.state === "done") return "A finished task can't be planned.";
-  return "";
-}
-export function setPlanned(tasks, id, planned) {
-  const out = {};
-  Object.keys(tasks).forEach((a) => {
-    out[a] = tasks[a].map((t) => {
-      if (t.id !== id) return t;
-      const n = Object.assign({}, t);
-      if (planned) n.planned = planned; else delete n.planned;
-      return n;
-    });
-  });
-  return out;
-}
-export function findTask(tasks, id) {
-  for (const a of Object.keys(tasks || {})) { const t = tasks[a].find((x) => x.id === id); if (t) return Object.assign({ area: a }, t); }
-  return null;
 }
 /** The title of an all-day event on `day` (not counting the event `exceptId`), or "". */
 export function allDayTitleOn(events, day, exceptId) {
   const e = (events || []).find((x) => x.day === day && !x.start && x.id !== exceptId);
   return e ? String(e.title || "") : "";
 }
-/** "By state": five columns, every visible area's tasks in area order. areas = [{id}], hidden = {areaId: true}. */
+/** Colour token for an area id. An id that is not a known area (removed, null) gets the neutral Unassigned colour, like app.js areaColor. */
+export function areaVar(areas, id) { return id && (areas || []).some((a) => a.id === id) ? "var(--a-" + id + ")" : "var(--ctx-2)"; }
+/** Tasks whose area key is not a known area (a removed area): one flat list, each task carrying its old area id. Shown as Unassigned. */
+export function unassignedTasks(tasks, areas) {
+  const known = new Set((areas || []).map((a) => a.id));
+  const out = [];
+  Object.keys(tasks || {}).forEach((k) => {
+    if (known.has(k)) return;
+    (tasks[k] || []).forEach((t) => out.push(Object.assign({ area: k }, t)));
+  });
+  return out;
+}
+/** "By state": five columns, every visible area's tasks in area order, then Unassigned tasks (never hidden). areas = [{id}], hidden = {areaId: true}. */
 export function tasksByState(tasks, areas, hidden) {
   const out = {};
   STATES.forEach((s) => { out[s] = []; });
@@ -288,5 +319,6 @@ export function tasksByState(tasks, areas, hidden) {
     if (hidden && hidden[a.id]) return;
     (tasks[a.id] || []).forEach((t) => { (out[t.state] || out.todo).push(Object.assign({ area: a.id }, t)); });
   });
+  unassignedTasks(tasks, areas).forEach((t) => { (out[t.state] || out.todo).push(t); });
   return out;
 }

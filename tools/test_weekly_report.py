@@ -60,7 +60,7 @@ def test_exact_numbers(ledger):
     r = wr.compute(WEEK)
     t = r["tasks"]
     assert (t["closed"], t["done"]) == (2, 1)
-    assert r["time_hours"]["by_area"] == [{"key": "atlas", "value": 1.48}]   # 60 + 29 min
+    assert r["time_hours"]["by_area"] == [{"key": "atlas", "value": 1.02}]   # active time: 60 min (a helper ran to the end of task 1) + 1 min (task 2; the 28 min gap to the session end is idle)
     assert r["usage_weighted"]["total_cost_events"] == 1500
     assert r["usage_weighted"]["total_task_cost"] == 1500
     assert {x["key"]: x["value"] for x in r["usage_weighted"]["by_helper"]} == {"chief": 1000, "implementer": 500}

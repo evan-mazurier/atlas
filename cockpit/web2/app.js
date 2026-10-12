@@ -167,8 +167,9 @@ function paintAttention(a) {
   document.getElementById("ab-review-t").textContent = a.pending_reviews + " pending review";
 }
 
+let areaPolls = 0;
 async function pollAttention() {
-  if (!AREAS.length) loadAreas();
+  if (!AREAS.length || ++areaPolls % 6 === 0) loadAreas();   // about once a minute: an area added to areas.yaml shows without a reload
   try {
     paintAttention(await api.get("/api/v2/attention"));
   } catch (e) {

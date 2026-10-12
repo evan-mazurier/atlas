@@ -151,7 +151,7 @@ def test_collision_guard_400_with_v1_reason(api, env):
     a, v = create_event(api, title="First", start="10:00", end="11:00")
     code, out = api.post("event", {"base": v, "event": ev_req(title="Second", start="10:30", end="11:30")})
     assert code == 400
-    assert out["error"] == "can't save 'Second': collides with First (10:00–11:00)"
+    assert out["error"] == "can't save 'Second': overlaps 'First' (10:00-11:00); 'Second' needs full attention"
     assert len(stored(env, "events")) == len([e for e in stored(env, "events")])
     # touching edges are fine; busy:false is never a candidate
     assert api.post("event", {"base": v, "event": ev_req(title="Next", start="11:00", end="12:00")})[0] == 200
@@ -359,7 +359,7 @@ def test_move_whole_event_and_collision(api, env):
     assert code == 200 and out["changed"]["day"] == "2027-05-04" and out["changed"]["start"] == "14:00"
     b, v = create_event(api, title="Blocker", day="2027-05-05", start="14:30", end="15:30")
     code, out = api.post("event/move", {"base": v, "id": a["id"], "day": "2027-05-05"})
-    assert code == 400 and out["error"].startswith("can't move 'Mover': collides with Blocker (14:30–15:30)")
+    assert code == 400 and out["error"].startswith("can't move 'Mover': overlaps 'Blocker' (14:30-15:30)")
     assert api.post("event/move", {"base": v, "id": "evt_zzzz", "day": FAR})[0] == 404
     assert api.post("event/move", {"base": v, "id": a["id"], "day": "bad"})[0] == 400
 

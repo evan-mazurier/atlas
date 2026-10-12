@@ -243,7 +243,7 @@ function renderTasks(ctx, tasks) {
   wrapper.dataset.keepScroll = "1";
   const table = kit.table(wrapper,
     ["Task", "Area", "Type", "Crew", "Rework rounds", "Caught", "Usage", "Verdict"].map((h) => ({ t: h, tip: TASK_HEAD_TIPS[h], num: ["Rework rounds", "Caught", "Usage"].includes(h) })),
-    tasks.map((t) => [titleCell(t), kit.areaCell(t.area, ctx.areaName(t.area)), t.type + (t.auto ? " · auto" : ""), crewText(t.crew),
+    tasks.map((t) => [titleCell(t), kit.areaCell(t.area, ctx.areaName(t.area), (x) => ctx.areas.some((a) => a.id === x)), t.type + (t.auto ? " · auto" : ""), crewText(t.crew),
       roundsCell(t),
       t.caught ? String(t.caught) : "–", compact(t.cost && t.cost.weighted), verdictOf(kit, t)]));
   table.querySelectorAll("tbody tr").forEach((tr, i) => {
@@ -295,7 +295,7 @@ function paintDrawer(ctx, t, events) {
   const head = el("div", "ledger-dhead", null, body);
   el("h2", null, taskTitle(t), head);
   const sub = el("div", "ledger-dsub", null, head);
-  kit.areaCell(t.area, ctx.areaName(t.area))(el("span", null, null, sub));
+  kit.areaCell(t.area, ctx.areaName(t.area), (x) => ctx.areas.some((a) => a.id === x))(el("span", null, null, sub));
   sub.appendChild(document.createTextNode(" " + t.type + " · " + statusWord(t.status)));
   if (t.session_title && t.session_title !== taskTitle(t)) el("div", "ledger-sub", t.session_title, head);
   if (t.src === "v1") badge(sub, "v1");
@@ -304,7 +304,7 @@ function paintDrawer(ctx, t, events) {
 
   const r = t.rounds || {};
   dl(body, [
-    ["Started", isoToHM(t.started)], ["Ended", isoToHM(t.ended)], ["Duration", t.duration_s ? duration(t.duration_s) : ""],
+    ["Started", isoToHM(t.started)], ["Ended", isoToHM(t.ended)], ["Active time", t.duration_s ? duration(t.duration_s) : ""],
     ["Crew", crewText(t.crew)],
     ["Rework rounds", t.rounds ? [roundsParts(r).main, roundsParts(r).sub, r.left != null ? r.left + " left" : ""].filter(Boolean).join(" · ") : ""],
     ["Caught", String(t.caught || 0)], ["Edits", String(t.edits || 0)],

@@ -166,23 +166,6 @@ async function run(op) {
 function newTmp(prefix) { S.tmp += 1; return prefix + "_tmp" + S.tmp; }
 
 const act = {
-  /** Create an event from form values. */
-  createEvent(f) {
-    const tmp = newTmp("evt");
-    const ev = { id: tmp, title: f.title, day: f.day, area: f.area || null, notes: f.notes || null, type: "personal", recur: f.recur || null };
-    if (f.start != null) { ev.start = C.fromMin(f.start); ev.end = C.fromMin(f.end); }
-    enqueue({
-      what: "create",
-      apply: (d) => Object.assign({}, d, { events: C.addEvent(d.events, ev) }),
-      undo: (d) => Object.assign({}, d, { events: C.removeSeries(d.events, tmp) }),
-      call: () => ({ path: "/api/v2/plan/event", body: { event: wireEvent(f, true) } }),
-      after: (r) => {
-        const id = r.changed && r.changed.id;
-        if (id) { S.idMap[tmp] = id; S.data = Object.assign({}, S.data, { events: C.renameId(S.data.events, tmp, id) }); }
-      },
-    });
-  },
-
   /** Edit the stored event (whole event or whole series). */
   editEvent(ev, f) {
     const saved = C.entriesOf(S.data.events, ev.id);
@@ -242,6 +225,17 @@ const act = {
       call: () => (one
         ? { path: "/api/v2/plan/event/skip", body: { id: real(ev.id), occurrence: ev.occurrence } }
         : { path: "/api/v2/plan/event/delete", body: { id: real(ev.id) } }),
+    });
+  },
+
+  /** Manual, optional done mark on one event (or one occurrence of a series). */
+  markDone(ev, flag) {
+    const saved = C.entriesOf(S.data.events, ev.id);
+    enqueue({
+      what: "done",
+      apply: (d) => Object.assign({}, d, { events: C.setDone(d.events, ev.id, ev.occurrence, flag) }),
+      undo: (d) => Object.assign({}, d, { events: C.restoreEvents(d.events, ev.id, saved) }),
+      call: () => ({ path: "/api/v2/plan/event/done", body: Object.assign({ id: real(ev.id), done: flag }, ev.recur ? { occurrence: ev.occurrence } : {}) }),
     });
   },
 
@@ -307,38 +301,12 @@ const act = {
     });
   },
 
-  /** A task card dropped on the calendar (an event of the estimate, linked to the task). startMin/endMin are minutes.
-      The agents' lane is parked: a task is only ever planned in the calendar. */
-  placeTask(task, day, startMin, endMin) {
-    const start = C.fromMin(startMin), end = C.fromMin(endMin);
-    const prevTasks = S.data.tasks, prevEvents = S.data.events;
-    const tmp = newTmp("evt");
-    const slot = { day, start, end, on: "me" };
-    const linked = S.data.events.filter((e) => e.task_of === task.id);
-    enqueue({
-      what: "place",
-      apply: (d) => {
-        const tasks = C.setPlanned(d.tasks || {}, task.id, slot);
-        const rest = d.events.filter((e) => e.task_of !== task.id);
-        const ev = { id: linked.length ? linked[0].id : tmp, title: linked.length ? linked[0].title : task.title, day, start, end, area: task.area || null, task_of: task.id };
-        return Object.assign({}, d, { tasks, events: C.addEvent(rest, ev) });
-      },
-      undo: (d) => Object.assign({}, d, { tasks: prevTasks, events: prevEvents }),
-      call: () => ({ path: "/api/v2/plan/task/place", body: { id: real(task.id), target: "me", day, start, end } }),
-      after: (r) => {
-        const id = r.changed && r.changed.id;
-        if (id && !linked.length) { S.idMap[tmp] = id; S.data = Object.assign({}, S.data, { events: C.renameId(S.data.events, tmp, id) }); }
-      },
-    });
-  },
-
   notice: (text, kind) => setNotice(text, kind),
 };
 
 /** The event as the engine wants it. A cleared optional field is sent as null (removes it). */
-function wireEvent(f, isNew) {
-  const e = { title: f.title, day: f.day, area: f.area || null, notes: f.notes || null };
-  if (isNew) e.type = "personal";            // an edit never sends `type`: appointment, errand and free keep theirs
+function wireEvent(f) {
+  const e = { title: f.title, day: f.day, area: f.area || null, notes: f.notes || null };      // an edit never sends `type`: appointment, errand and free keep theirs
   if (f.start === undefined) { /* time untouched: not sent */ }
   else if (f.start != null) { e.start = C.fromMin(f.start); e.end = C.fromMin(f.end); } else { e.start = null; e.end = null; }
   if (f.recur !== undefined) e.recur = f.recur || null;
@@ -364,7 +332,6 @@ function buildHead(root) {
   ui.button(nav, { label: "Previous", onClick: () => step(-1) });
   ui.button(nav, { label: "Today", onClick: () => { S.day = todayISO(); navigated(); } });
   ui.button(nav, { label: "Next", onClick: () => step(1) });
-  ui.button(right, { label: "New event", onClick: () => openEventForm(P, { mode: "new", day: S.day }) });
   S.els.loading = el("span", "plan-loading", "", right);
 }
 
@@ -433,7 +400,7 @@ export default {
     const th = el("div", "ch", null, tasks);
     const tt = el("div", "ct", null, th);
     el("h3", null, "Tasks per area", tt);
-    el("p", null, "To do, next, doing, pending review, done. Drag a card onto the calendar to plan it. Tasks from project plans are read-only.", tt);
+    el("p", null, "To do, next, doing, pending review, done. Tasks are planned from a session. Tasks from project plans are read-only.", tt);
     S.els.taskAdd = el("div", "plan-taskadd", null, tasks);
     buildTaskAdd(P, S.els.taskAdd);
     S.els.taskCtl = el("div", "plan-taskctl", null, tasks);

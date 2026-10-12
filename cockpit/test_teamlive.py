@@ -120,8 +120,8 @@ def test_playbook_beats_worktype_and_skill_tool_counts():
     evs = [prompt("12:00:00"), ev("12:00:01", "PreToolUse", tool="Skill", cmd="optimize-prompt"),
            ev("12:00:09", "WorkType", type="writing")]
     assert lane(build(evs))["type"] == "Sharpen an idea"
-    evs = [prompt("12:00:00"), ev("12:00:01", "UserPromptExpansion", cmd="/start-of-day", kind="slash")]
-    assert lane(build(evs))["type"] == "Product morning"
+    evs = [prompt("12:00:00"), ev("12:00:01", "UserPromptExpansion", cmd="/tune-up", kind="slash")]
+    assert lane(build(evs))["type"] == "Monthly tune-up"
 
 
 def test_inferred_labels():
@@ -506,6 +506,43 @@ def test_v2_waiting_ends_after_two_hours_and_ignores_helper_events():
     # a late helper stop after the Stop is not a main-session event
     evs = [prompt("12:00:00"), ev("12:10:00", "Stop"), ev("12:11:00", "SubagentStop", in_agent="a1", agent_id="a1", agent_type="scout")]
     assert lane(build(evs))["waiting"] is True
+
+
+def test_team_done_after_the_opener_is_done_not_waiting():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:09:00", "TeamDone"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["status"], s["waiting"], s["done"]) == ("idle", False, True)
+    s = lane(build(evs[:3] + [ev("12:10:00", "Stop")]))      # TeamDone last in the log, then Stop
+    assert (s["done"], s["waiting"]) == (True, False)
+
+
+def test_new_opener_after_team_done_reopens():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
+           prompt("12:07:00"), ev("12:07:05", "WorkType", type="research"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["done"], s["waiting"]) == (False, True)
+
+
+def test_playbook_after_team_done_reopens():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
+           ev("12:07:00", "UserPromptExpansion", cmd="daily-review"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["done"], s["waiting"]) == (False, True)
+
+
+def test_team_done_without_opener_or_from_a_helper_is_ignored():
+    s = lane(build([prompt("12:00:00"), ev("12:05:00", "TeamDone"), ev("12:10:00", "Stop")]))
+    assert (s["done"], s["waiting"]) == (False, True)
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"),
+           ev("12:05:00", "TeamDone", in_agent="a1"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["done"], s["waiting"]) == (False, True)
+
+
+def test_done_keeps_status_working():
+    s = lane(build([prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:09:00", "TeamDone"),
+                    ev("12:10:00", "PreToolUse", tool="Bash")]))
+    assert (s["status"], s["done"], s["waiting"]) == ("working", True, False)
 
 
 def test_v2_area_arg_from_the_work_type_event():

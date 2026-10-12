@@ -167,8 +167,8 @@ facts.
 | `session_start` | SessionStart | `source`, `entry` (CLAUDE_CODE_ENTRYPOINT), `model?`, `transcript`, `title?` |
 | `session_end` | SessionEnd | `reason` |
 | `prompt` | UserPromptSubmit | `cmd?` slash-command NAME only (no args, no text) |
-| `work_type` | PreToolUse Bash/PowerShell `: team-type <type> [<area>] [task:<id>]` | `type` (normalised via `workflows.yaml` aliases), `area` (§1.3), `task` (the new task id), `plan_ref?` (since 2026-10-10: the Plan item the session works on, see the task-opening rules) |
-| `playbook` | UserPromptExpansion / PreToolUse Skill for a playbook name | `cmd`, `area`, `task`, opens a task of type `playbook` |
+| `work_type` | PreToolUse Bash/PowerShell `: team-type <type> [<area>] [task:<id>]` | `type` (normalised via `workflows.yaml` aliases), `area` (§1.3), `task` (the new task id), `plan_ref?` (since 2026-10-10: the Plan item the session works on, see the task-opening rules), `plan_auto?` (`true` when `plan_ref` was inferred, see the automatic link) |
+| `playbook` | UserPromptExpansion / PreToolUse Skill for a playbook name | `cmd`, `area`, `task`, `plan_ref?` + `plan_auto?` (automatic link only), opens a task of type `playbook` |
 | `summary` | PreToolUse Bash/PowerShell `: team-summary '<json>'` | `task`, `goal`, `produced`, `decisions`, `open`, `review_min?` (int), each ≤ 200 chars; the Chief's 5 lines |
 | `task_done` | PreToolUse `: team-done` when allowed | `task`, `version` |
 | `helper_start` | PreToolUse Agent | `tuid`, `helper` (subagent_type), `label` (description ≤ 60), `bg` (bool), `version` (task version at launch) |
@@ -212,6 +212,7 @@ Task-opening rules:
   (the Team panel's log) records the same validated `plan_ref` on its `WorkType` record, and logs no `WorkType` at all when the declaration fired inside a helper (the Team panel also drops any such record on read). The id is NOT checked
   against the Plan at declaration time (the hook never reads the Plan); it is resolved on read (§1.7, §5.1).
   `tools/find_plan_item.py "<name words>" [--day YYYY-MM-DD]` finds the id (§5.3).
+* **Automatic Plan link** (since 2026-10-12): when the hook opens a `playbook` or `work_type` task WITHOUT an explicit `task:<id>`, it looks for the Plan item the session was run for. Never for the implicit `undeclared` task; an explicit `task:<id>` always wins and is unchanged. Candidates are today's calendar events (`GET <plan_url>/api/v2/plan?from=<today>&to=<today>`, section 5.3) with the SAME area as the task being opened, with a start and end time (all-day skipped), not `done`, and running now or starting within 15 minutes (`start - 15 min <= now < end`, local time). Exactly one candidate links; zero or several = no link (never a guess). The ref is the row's id: `evt_xxxxxxxx` for a single event, `evt_xxxxxxxx@YYYY-MM-DD` (the row's `occurrence`) when the row has `recur`; it is validated with the same pattern as an explicit ref. It is stored as `plan_ref` plus `plan_auto: true` on the opening event, at task open only (never revised later); `derive` copies both into the TaskRecord (`plan_auto`, false when absent). `plan_url` comes from `hooks/atlas_config.json` (key `plan_url`, default `http://127.0.0.1:8765`), overridden by the env var `ATLAS_PLAN_URL`; a present-but-empty, null or `off` value (either place) switches the feature off, the default URL applies only when the key is absent; only a loopback host (127.0.0.1, ::1, localhost) is used, with no proxy; a malformed `task:` token counts as explicit (no automatic link); helpers never trigger the read; an automatic ref is not an explicit one for the 60 s duplicate rule (an explicit `task:` after it re-opens the task); `install_hooks.py` keeps an installed `plan_url`. The read is stdlib `urllib` with a 0.5 s timeout per socket operation (redirects are not followed: a 30x means no link), done BEFORE the ledger transaction (never under the lock), only when a bare declaration or playbook is about to open; any failure (server down, bad JSON, timeout) = no link, silently, and the hook never reads `schedule.yaml`.
 * An explicit declaration always opens a **new** task, even with the same type as the open one (the old
   task is closed as `switched`). The spent count carries on any re-declaration while the open task is at/over
   budget and NOT RESOLVED, or escalated, whatever the type; under budget every declaration starts fresh. **Resolved**
@@ -307,11 +308,19 @@ event in the same session (`switched`), `session_end` (`ended`), or nothing yet 
 become tasks with `src: "v1"`, `type: "coding"`, area from the project (`areas.yaml` `projects`),
 crew from their phases, verdicts from `review` events, status `done` when merged.
 
+`duration_s` is the task's **active time**, not its wall-clock span: the union of (a) every helper interval
+(`helper_start` or `helper_resume` to the matching `helper_end`, paired by `tuid`/`agent_id`; a helper with no end runs to
+the task end) and (b) every gap between two consecutive events of the task (task open and task end included) of at most
+`IDLE_GAP_S` = 15 minutes (`derive.py`). Longer gaps outside a helper interval count zero. `span_s` is the old wall-clock
+value (`started` to `ended`, or to the last event while open). v1 imported tasks (`src: "v1"`) have no event detail:
+`duration_s` = `span_s`. Carry-over notices (a `refusal` with `guard: "rework"` and a detail starting `carry-over`) carry
+`notice: true` in the task's `refusals`.
+
 ```json
 {
   "id": "abcd1234-2", "src": "v2", "sid": "...", "session_title": "Atlas v2 build",
-  "area": "atlas", "type": "coding", "playbook": null, "plan_ref": "evt_0a1b2c3d", "auto": false,
-  "started": "...", "ended": "...", "duration_s": 5400, "status": "done",
+  "area": "atlas", "type": "coding", "playbook": null, "plan_ref": "evt_0a1b2c3d", "plan_auto": false, "auto": false,
+  "started": "...", "ended": "...", "duration_s": 5400, "span_s": 7200, "status": "done",
   "crew": ["implementer", "test-runner", "reviewer"],
   "helpers": [{"helper": "implementer", "count": 2, "labels": ["Build ledger store"]}],
   "rounds": {"needs_changes": 1, "budget": 2, "granted": 0, "left": 1, "own": 1, "carried": 0},
@@ -330,7 +339,7 @@ crew from their phases, verdicts from `review` events, status `done` when merged
   else the session title, else null. The tasks endpoints (§5.2) replace it with `plan_title` when that resolves, so the field
   is the one name to show; `session_title` stays for a muted second line. A v1 job that never finished is `ended`
   (v1 is retired), with `ended` = its last event.
-* `plan_ref` = the opening event's `plan_ref` (null when none). The tasks endpoints (§5.2) add `plan_title` to EVERY task: the
+* `plan_ref` = the opening event's `plan_ref` (null when none); `plan_auto` = the opening event's `plan_auto` (true when the link was inferred, false otherwise). The tasks endpoints (§5.2) add `plan_title` to EVERY task: the
   Plan item's current title when the ref resolves (read-only, via `cockpit/plan/refs.py`, finished project-plan tasks included), else null.
   The Ledger tasks table shows a linked task as a muted "Plan:" prefix plus that title (its own name as the hover hint), so cost per Plan item is visible.
 * A task is **resolved** when its latest verdict is a READY covering the latest main-session version (see the task-opening
@@ -374,9 +383,12 @@ v2: helpers edit through Edit/Write, and the reviewer checks the diff, not the e
 ## 3. The areas file
 
 `areas.yaml` (root), format documented in the file itself: `areas: [{id, name, color, folders?,
-playbooks?, projects?, match?, group?}]`. Six areas at start, in this order (the order the
-colour-blind check passed): `md` Product `#d95926`, `job` Research `#199e70`, `train` Training
-`#c98500`, `atlas` Atlas `#9085e9`, `admin` Admin `#008300`, `pers` Personal `#d55181`.
+playbooks?, projects?, match?, group?, attention?, attention_fixed?, short?}]`. The areas of this copy are the example set in `areas.yaml`, in file order (the order the
+colour-blind check passed).
+Parallel planning keys (2026-10-11), all optional and checked by `tools/check_look.py`: `attention: shared|full` (absent =
+full; a shared event may run in parallel with other shared events, a full one overlaps nothing), `attention_fixed: true`
+(an event cannot override the area's attention), `short: <2-5 capitals A-Z>` (the compact label on the Plan). Values: the example set shows each combination.
+Removing an area = delete its entry; events, tasks and ledger rows that still carry the old id are shown as Unassigned (never migrated).
 Readers: `GET /api/v2/areas` (§5) serves it; the front end sets `--a-<id>` on `:root` from it at boot,
 so area colours are never duplicated in CSS.
 
@@ -468,6 +480,8 @@ and served from a cache (ledger stats).
 | `GET /api/v2/shell/roster` | `{ok, helpers: [{id, model, use_for, never}], types: [{id, label, crew, budget, rung, move}], playbooks: [{command, area, crew, budget, per_task}]}`, read per request: helpers listed from the agent files (`ATLAS_AGENTS_DIR`, default `~/.claude/agents/*.md`, model from frontmatter); `use_for` and `never` verbatim from the `| Helper | Model | Use it for | Never |` table in the global instructions file (`ATLAS_TEAM_DOC`, default `~/.claude/CLAUDE.md`), falling back to the agent description / first Never line when the table is missing; a personal name in the table is rendered as "the operator", types and playbooks from `workflows.yaml` (`undeclared` skipped; `budget: null` = no rework; a playbook's `crew`/`budget` come from `playbook_crews`, budget falling back to `types.playbook.budget`; the Playbook type row renders "set per playbook (below)" instead of a crew) |
 | `GET /api/v2/ledger/*` | owned by Lane 1, see 5.2 |
 
+**Done sessions (2026-10-12).** The orchestrator closes a finished task with the no-op shell command `: team-done` (exactly, surrounding whitespace allowed, at most 200 characters, never from a helper). `hooks/team_events.py` logs it at PreToolUse as `{ev: "TeamDone", ts, sid, cwd}` and nothing else, in the team-live log next to `WorkType`. In `teamlive`, a session is `done` when a main-session `TeamDone` (not `in_agent`) comes after its current task's opener (the latest `WorkType` or playbook command, the same anchor as the current-task window); a newer opener re-opens it, and a session with no opener is never `done`. `GET /api/v2/team` sessions carry `done` (bool). `waiting` is true only while the session is idle, the last main-session event is a Stop within 2 h AND the session is not `done`; `/api/v2/attention` follows `waiting`, so a done session reads `idle` there. `done` changes nothing else (`status`, hiding, timelines). The Team row shows a quiet `done` label where `waiting` would show. Known accepted limit: `TeamDone` is logged at PreToolUse, so in enforce mode a team-done refused by the done-lock still shows done until the next declaration; the ledger stays the record.
+
 **Live helpers (2026-10-10).** A session is `working` when its main conversation is working OR at least one of its
 helpers is live, background (`run_in_background`) or foreground alike. A helper is live when the event log has its
 `SubagentStart` and no matching stop AND its own transcript (`<project folder>/<session id>/subagents/agent-<id>.jsonl`,
@@ -500,7 +514,7 @@ per content block); left as is, recorded in the build log.
 `tier` = opus/sonnet/haiku from the model id. Weeks are ISO weeks, local time. Definitions:
 the task list shows tasks whose span overlaps the week; KPIs count tasks by `ended` in the week;
 `first_pass_ready_pct` = closed tasks whose first verdict is READY ÷ closed tasks with ≥ 1 verdict;
-`rework_refused`: `value` = enforced + would, plus `split: {enforced, would}`; `time_by_area` = sum of task `duration_s`;
+`rework_refused`: `value` = enforced + would, plus `split: {enforced, would}`, carry-over notices (`notice: true`) excluded; `time_by_area` = sum of task active time (`duration_s`); `rounds_hist.refused` = tasks with a real rework refusal (carry-over notices excluded);
 `usage_by_day` and `usage_by_helper` are weighted (deduped, §1.5).
 *(Amended at the screen review 2026-10-09.)* `usage_by_type` = the week's weighted tokens per declared type
 of work (`kind: "type"`, key = the type) and per playbook (`kind: "playbook"`, key = `playbook:<cmd>`,
@@ -542,9 +556,11 @@ crew, status, verdict, review_min}]` (automatic sessions' actual time; feeds the
 
 ```json
 {"ok": true, "version": 412, "today": "2026-10-09",
- "areas": [{"id": "md", "name": "Product", "color": "#d95926"}],
+ "areas": [{"id": "md", "name": "Product", "color": "#d95926", "attention": "shared",
+            "attention_fixed": false, "short": "MD"}],
  "events": [{"id": "evt_…", "occurrence": "2026-10-09", "title": "…", "day": "2026-10-09",
              "start": "10:00", "end": "11:00", "area": "md", "area_source": "explicit|match|none",
+             "attention": "shared|full", "attention_source": "fixed|event|area|default",
              "type": "personal", "recur": null, "notes": null}],
  "placements": [{"session": "sess_…", "project": "…", "task": "…", "day": "…", "start": "…", "end": "…", "area": "train"}],
  "work_blocks": [{"id": "blk_…", "day": "…", "start": "…", "end": "…", "label": "…"}],
@@ -570,12 +586,42 @@ overrides). An event's area: its explicit `area` field (always wins), else the f
 WORD anywhere in the title (case and accents ignored; `Run` does not match `Running`) (`area_source: "match"`
 for both), else `null`. `areas.yaml` format: `match: {title_prefix: [...], keywords: [...]}`, both keys optional.
 Titles are never rewritten automatically. Events may carry `task_of: <task id>` (additive, returned in `events`).
+An expanded event carries `done: true` when the event has `done: true` (single) or the occurrence date is in its
+`done_on` list (series); the key is absent otherwise. The mark is manual only: nothing sets it automatically, it
+feeds no statistic and is independent of task states in `tasks.yaml`.
 **Day window 07:00 to 22:00** (screen review 2026-10-09): a timed event outside it is refused (400
 `... is outside the 07:00-22:00 day`) on create, move and occurrence retime; only when the day/time of the event
 is new or changed, so legacy events outside the window stay editable. **All-day rule:** an all-day event is
 never busy-checked against the day's other events; once a day has an all-day event (a recurring occurrence
 counts, a skipped one does not), a NEW timed or all-day event on that day, or an event moved onto it, is refused
 (400 `can't save 'X': <day> already has the all-day event 'Y'`); events already there stay as they are.
+**Parallel planning (2026-10-11).** Up to 3 Claude Code sessions may run at once, so the Plan allows up to
+`MAX_PARALLEL = 3` overlapping *shared* work blocks, while *full* blocks (training, personal life) overlap nothing.
+*Effective attention* of an event: the area's value when the area has `attention_fixed`; else the event's own `attention`
+(`shared|full`, stored in `schedule.yaml` only when set explicitly; anything else is 400); else the area's `attention`; else
+(no area resolved) `full`. The area is resolved exactly as for the read path (explicit area, else title prefix, else keyword).
+GET events carry `attention` (effective) and `attention_source` (`fixed|event|area|default`); GET areas carry `attention`,
+`attention_fixed`, `short`. Sending `attention` on an event whose effective area is fixed to another value is 400
+`can't save 'X': <Area name> is always full`.
+**The guard** replaces the busy-overlap rule between timed events (window rule, all-day rule, availability blocks,
+`full_days` and placements keep their behaviour; the latter three keep the schedmath reason text). For a timed busy event
+being created, moved or retimed, against every other timed busy event occurrence of that day (recurrences expanded, overrides
+and skips applied, itself excluded, `busy: false` and all-day events ignored):
+a FULL event overlapping any other event is 400 `can't save 'X': overlaps 'Y' (HH:MM-HH:MM); 'X' needs full attention`;
+a SHARED event overlapping a FULL event is 400 `can't save 'X': overlaps 'Y' (HH:MM-HH:MM), which needs full attention`, and
+if at any instant inside its slot the shared events (itself included) would exceed `MAX_PARALLEL` it is 400
+`can't save 'X': 3 sessions already run in parallel HH:MM-HH:MM` (the merged stretch where 3 shared events already run).
+The verb in the prefix is `save`, `move` or `retime ... on <day>` as before. The guard runs only when day/start/end/busy or
+the effective attention changed, so a notes-only edit on legacy overlapping data is never refused. It applies to event upsert,
+`event/move` (occurrence overrides and cross-day occurrence moves included), `task/place` "me" and `review/schedule`.
+`MAX_PARALLEL` lives in `cockpit/plan/model.py` only.
+**The screen only moves things (2026-10-11).** Events are created by chat: a session describes the plan, and
+`tools/plan_day.py` applies it through this API. The Plan screen no longer creates events (no click or drag on empty time,
+no "New event" button, task cards cannot be dragged onto the calendar); it still drags and resizes existing events, opens an
+existing event to edit or delete it, and shows a refused move with the server's reason as visible text. Week view: full
+events span the column, shared events are packed into tracks inside their overlap cluster (width = column / tracks), `SHORT · title`
+at half a column or more, the first three letters of `SHORT` at a third, no count marker on parallel clusters. Day view: one row per track needed that day,
+full events span all rows; the day header shows `work Xh · sessions Yh` over the shared events only (union of their time, sum of their durations; full blocks such as training, meals and leisure are left out); a third-width week block and a day-view block of 30 minutes or less show only the first three letters of their area tag (time and title in the tooltip); every block is drawn at its true length.
 **Agents lane: PARKED (2026-10-10, decided by the operator).** The Plan screen shows only the operator's time: no
 agents column in the week view, no "Agents" rows in the day view, no agents drop target, no Owner = Agents choice in
 the new-task form. It stays parked until scheduled automatic starts exist. For data compatibility the server is
@@ -592,15 +638,16 @@ event whose `task_of` is the task id (the event is the truth), `on: "agents"` is
 
 | Path | Body (besides `base`) | Effect |
 | --- | --- | --- |
-| `/api/v2/plan/event` | `{event: {id?, title, day, start?, end?, area?, type?, notes?, recur?}}` | upsert (new id `evt_<8 hex>` when absent) |
+| `/api/v2/plan/event` | `{event: {id?, title, day, start?, end?, area?, attention?, type?, notes?, recur?}}` | upsert (new id `evt_<8 hex>` when absent) |
 | `/api/v2/plan/event/delete` | `{id}` | delete |
 | `/api/v2/plan/event/move` | `{id, occurrence?, day, start?, end?}` | move (an occurrence of a recurring event = override) |
 | `/api/v2/plan/event/skip` | `{id, occurrence}` | skip one occurrence |
+| `/api/v2/plan/event/done` | `{id, occurrence?, done: bool}` | manual, optional done mark (own tracking). Single event: `done: true` stores `done: true`, `false` removes the key. Recurring event: `occurrence` required (400 if missing or not a real, unskipped occurrence), stored in a sorted `done_on: [iso, ...]` list (key removed when empty). Unknown id 404, stale base 409. No time guards (no time changes), idempotent. Answer `changed` = the event as stored |
 | `/api/v2/plan/placement/move` · `/delete` · `/add` | as v1 `/api/schedule/placement/*` | same semantics |
 | `/api/v2/plan/block` · `/block/delete` · `/block/move` | as v1 `/api/schedule/block*` | same semantics |
 | `/api/v2/plan/task` | `{task: {id?, area, title, state?, owner?, estimate_min?, reversible?}}` | upsert an area task in `tasks.yaml` |
 | `/api/v2/plan/task/state` | `{id, state}` | move along todo → next → doing → review → done |
-| `/api/v2/plan/task/place` | `{id, target: "me"\|"agents", day, start, end}` | one locked write (both files when needed). `"me"`: creates an event in the calendar (`title` = task title, `area` = task area, `task_of: <id>`, the given slot; the client picks `estimate_min`, 60 when unknown) or MOVES the event already linked to that task, and sets `planned` on a `tasks.yaml` task (state unchanged; a `plan.yaml` task only gets the event). Same guards as an event save (window, all-day rule, busy overlap). `"agents"` (parked, tolerated, no longer sent by the screen): sets the task's `planned` slot (only `owner: agents`, only `tasks.yaml` tasks; a `plan.yaml` task is 400 read-only); 400 `3 agents already busy HH:MM-HH:MM` when 3 agents' items already overlap inside the slot. **Never starts anything.** Unknown id 404, stale base 409, no plan file 503. Answer `changed` = the event (`me`) or the task (`agents`); `task` = the task as stored (`me`, `tasks.yaml` tasks) |
+| `/api/v2/plan/task/place` | `{id, target: "me"\|"agents", day, start, end}` | one locked write (both files when needed). `"me"`: creates an event in the calendar (`title` = task title, `area` = task area, `task_of: <id>`, the given slot; the client picks `estimate_min`, 60 when unknown) or MOVES the event already linked to that task, and sets `planned` on a `tasks.yaml` task (state unchanged; a `plan.yaml` task only gets the event). Same guards as an event save (window, all-day rule, attention guard). `"agents"` (parked, tolerated, no longer sent by the screen): sets the task's `planned` slot (only `owner: agents`, only `tasks.yaml` tasks; a `plan.yaml` task is 400 read-only); 400 `3 agents already busy HH:MM-HH:MM` when 3 agents' items already overlap inside the slot. **Never starts anything.** Unknown id 404, stale base 409, no plan file 503. Answer `changed` = the event (`me`) or the task (`agents`); `task` = the task as stored (`me`, `tasks.yaml` tasks) |
 | `/api/v2/plan/review/schedule` | `{id, day, start, end}` | creates an event in the operator's time (`area` = the item's, title `Review: <title>`, `review_of: <task_id>`); "scheduled" is derived from that field (one file written) |
 | `/api/v2/plan/review/done` | `{id}` | appends `{task_id, at}` to `tasks.yaml` `reviews:` (it leaves the tray) |
 
@@ -612,7 +659,8 @@ read in from a project's `plan.yaml` are read-only here (writes to them → 400)
 (`skips`, `overrides`, `busy`, `remind`, `location`, anything unknown) are kept; a field sent as
 `null` is removed; `area` must be an id in `areas.yaml` (else 400). Moving one occurrence: same day →
 `overrides[date]`; different day → `skips += occurrence` plus a new single event (same title, area,
-type, `from_series: <id>`), in one locked write. Collisions with busy time → 400 with v1's reason text
+type, `from_series: <id>`, plus `done: true` when that occurrence was marked done, whose date then leaves `done_on`),
+in one locked write. `done` / `done_on` are kept by an upsert like any other unknown field. Collisions with busy time → 400 with v1's reason text
 (the v1 guard is kept). Hand-written unquoted times (`10:00` loaded as an int) are normalised to
 `"HH:MM"` on read.
 
@@ -633,6 +681,17 @@ response whose `version` is lower than one it has seen. The Plan endpoint never 
 `state.snapshot()` and never reads transcripts.
 
 **Python API** (used by others, import-guarded): `plan.api.review_tray_count() -> int`.
+
+**Planning from a chat (`tools/plan_day.py`, 2026-10-11).** `py -3.12 tools/plan_day.py show [--day YYYY-MM-DD] [--days N]`
+prints one tab-separated line per event of the range: day, `start-end` (or `all-day`), area short, attention, id, title.
+`py -3.12 tools/plan_day.py apply <ops.json|-> [--dry-run]` applies a JSON list of ops in order, each with a fresh `base` (the
+version is read before every write): `{"op":"add","title","day","start","end","area"?,"attention"?,"notes"?}`,
+`{"op":"move","id","day","start","end","occurrence"?}`, `{"op":"delete","id"}`, `{"op":"retitle","id","title"}`, `{"op":"done","id"}` and `{"op":"undone","id"}` (post to `/api/v2/plan/event/done`). `show` appends
+a final column `done` on done events. An id written
+`evt_xxxxxxxx@YYYY-MM-DD` (as `find_plan_item.py` prints it) is split into id + `occurrence`; for `delete` it skips that one
+occurrence. It stops at the first refusal, prints how many ops were applied and the server's reason verbatim, and exits 1 (0 when
+all applied); `--dry-run` prints the requests and sends nothing. It talks to the live cockpit only (`--url` / `ATLAS_COCKPIT_URL`,
+default `http://127.0.0.1:8765`) and never writes a file itself.
 
 **Finding an id (`tools/find_plan_item.py`, 2026-10-10).** `py -3.12 tools/find_plan_item.py "<name words>" [--day YYYY-MM-DD]`
 (default today) reads `GET /api/v2/plan?from=<day-1>&to=<day+1>` on the live cockpit (`--url` / `ATLAS_COCKPIT_URL`,
@@ -1074,15 +1133,15 @@ The creatures are **copied verbatim** from `cockpit/web/team.html` (tables `T`, 
 timeline and layout around them follow B (the timeline uses `timelineLanes` with model-tier colours
 as in the chart kit's "Team · today" example, flat `--m-*` colours that match the creatures). A session row reads
 "title · type of work · area chip" (no folder or project text); when the session declared a Plan item (`plan_ref`, §1.2)
-and it resolves, the row shows that item's title instead (`plan_title`, e.g. "Product: write the onboarding email"; each
+and it resolves, the row shows that item's title instead (`plan_title`, e.g. "Product: open weekly report"; each
 session in `GET /api/v2/team` carries `plan_ref` and `plan_title`, both null when none); timeline rows carry `{sid, label, type, cost, segs}`. A session working only because of helpers (`via_helpers`, §5.1) shows a line "working · N helper(s) in the background" with the helper names and labels instead of reading idle. Data: `GET /api/v2/team` every 2 s, repaint only when the JSON changed. Under the strip, a collapsed-by-default "Roster" section (`team-roster.js`, open state in localStorage) loads `GET /api/v2/shell/roster` on first open and shows helpers, types of work and playbooks as hairline tables. The orchestrator row in the helpers table (columns Name, Model, Use it for, Never) is a fixed client-side row (the main session has no agent file).
 
 ### 8.4a Plan screen: the operator's time only (2026-10-10)
 `screens/plan*.js`. The week view is seven day columns of the operator's time (events, read-only project placements,
 scheduled reviews); the day view is a single "Calendar" lane. There is no agents column, no "Agents · lane N" rows, no
-agents drop target and no Owner choice in the new-task form (new tasks are `owner: me`). Task cards may be dropped on
-the calendar only (`placeReason(task)` refuses finished tasks; any open task goes, including agents' and project-plan
-tasks). The Review tray stays: automatic results land there and "Schedule" puts a review into the operator's time.
+agents drop target and no Owner choice in the new-task form (new tasks are `owner: me`). Since 2026-10-11 the screen does
+not create events and task cards are not dragged onto the calendar (events and task slots are planned from a session with
+`tools/plan_day.py`, §5.3); existing events drag, resize and open for edit. The Review tray stays: automatic results land there and "Schedule" puts a review into the operator's time.
 The legend and the card heading say nothing about agents. Parked until scheduled automatic starts exist (§5.3).
 
 ### 8.5 Ledger screen

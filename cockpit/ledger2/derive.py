@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - flat import
     import store  # type: ignore
 
 CHECK_FILES = ("areas.yaml", "look.css")
+IDLE_GAP_S = 15 * 60  # a gap between two events of a task counts as work only up to this long, unless a helper ran across it
 VERDICT_MAP = {"commit-ready": "READY", "needs-changes": "NEEDS_CHANGES", "escalate": "ESCALATE"}
 
 
@@ -49,14 +50,44 @@ def _min_budget(a, b):
     return min(a, b)
 
 
+def _active_secs(started, end, times: list, helpers: list) -> int:
+    """Active seconds: union of helper intervals and of event gaps <= IDLE_GAP_S, inside [started, end]."""
+    a, b = parse_t(started), parse_t(end)
+    if not a or not b or b <= a:
+        return 0
+    pts = sorted({min(max(x, a), b) for x in (parse_t(t) for t in times) if x} | {a, b})
+    iv = [(pts[i], pts[i + 1]) for i in range(len(pts) - 1) if (pts[i + 1] - pts[i]).total_seconds() <= IDLE_GAP_S]
+    for h in helpers:
+        s0 = parse_t(h["start"])
+        if not s0:
+            continue
+        e0 = parse_t(h["end"]) if h["end"] else b
+        s0, e0 = min(max(s0, a), b), min(max(e0 or b, a), b)
+        if e0 > s0:
+            iv.append((s0, e0))
+    iv.sort()
+    total, cur_s, cur_e = 0.0, None, None
+    for x, y in iv:
+        if cur_e is None or x > cur_e:
+            if cur_e is not None:
+                total += (cur_e - cur_s).total_seconds()
+            cur_s, cur_e = x, y
+        elif y > cur_e:
+            cur_e = y
+    if cur_e is not None:
+        total += (cur_e - cur_s).total_seconds()
+    return int(total)
+
+
 def _new_task(e: dict, wf: dict, prev: dict | None) -> dict:
     typ = "playbook" if e["ev"] == "playbook" else (e.get("type") or "undeclared")
     info = type_info(wf, typ)
     t = {
         "id": e.get("task"), "src": "v2", "sid": e.get("sid"), "session_title": None,
         "area": e.get("area"), "type": typ, "playbook": e.get("cmd") if e["ev"] == "playbook" else None,
-        "plan_ref": e.get("plan_ref"),
-        "auto": False, "started": e.get("t"), "ended": None, "duration_s": 0, "status": "open",
+        "plan_ref": e.get("plan_ref"), "plan_auto": bool(e.get("plan_auto")),
+        "auto": False, "started": e.get("t"), "ended": None, "duration_s": 0, "span_s": 0, "status": "open",
+        "_times": [], "_hiv": [],
         "_budget": info["budget"], "_nc": set(), "_esc": False, "_granted": 0,
         "_carried": 0, "_nc_at": 0, "_vseq": None, "_version": 0, "_lv": -1, "_other_v": -1, "_edits": 0, "_needs_check": info["needs_check"],
         "helpers": OrderedDict(), "verdicts": [], "_seen_agents": set(), "refusals": [],
@@ -98,7 +129,8 @@ def _own_title(t: dict) -> str | None:
 def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
     ended = t["ended"]
     rec_end = ended or last_t or t["started"]
-    t["duration_s"] = _secs(t["started"], rec_end)
+    t["span_s"] = _secs(t["started"], rec_end)
+    t["duration_s"] = _active_secs(t["started"], rec_end, t["_times"], t["_hiv"])
     budget = t["_budget"]
     nc = t["_carried"] + len(t["_nc"])
     left = None if budget is None else max(0, budget + t["_granted"] - nc)
@@ -111,8 +143,8 @@ def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
     out = {
         "id": t["id"], "src": "v2", "sid": t["sid"], "session_title": t["session_title"],
         "title": _own_title(t),
-        "area": t["area"], "type": t["type"], "playbook": t["playbook"], "plan_ref": t.get("plan_ref"), "auto": t["auto"],
-        "started": t["started"], "ended": ended, "duration_s": t["duration_s"], "status": t["status"],
+        "area": t["area"], "type": t["type"], "playbook": t["playbook"], "plan_ref": t.get("plan_ref"), "plan_auto": t.get("plan_auto", False), "auto": t["auto"],
+        "started": t["started"], "ended": ended, "duration_s": t["duration_s"], "span_s": t["span_s"], "status": t["status"],
         "crew": list(t["helpers"].keys()), "helpers": helpers,
         "rounds": {"needs_changes": nc, "budget": budget, "granted": t["_granted"], "left": left,
                    "own": len(t["_nc"]), "carried": t["_carried"]},
@@ -200,10 +232,19 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
             spawn_n += 1
             if e.get("tuid"):
                 seq_of[e["tuid"]] = spawn_n
+        if ev in ("helper_paired", "helper_end") and e.get("agent_id"):
+            for x in tasks.values():
+                _track_helper(x, e, t)
         tid = e.get("task")
         tk = tasks.get(tid) if tid else (last)
         if tk is None:
             continue
+        if t:
+            tk["_times"].append(t)
+        if ev == "helper_start":
+            tk["_hiv"].append({"start": t, "end": None, "tuid": e.get("tuid"), "aid": None})
+        elif ev == "helper_resume" and e.get("agent_id"):
+            tk["_hiv"].append({"start": t, "end": None, "tuid": None, "aid": e["agent_id"]})
         if ev == "task_done":
             if tk["status"] == "open":
                 tk["status"], tk["ended"] = "done", t
@@ -249,7 +290,10 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
             tk["_granted"] += int(e.get("n") or 1)
             tk["_esc"] = False
         elif ev == "refusal":
-            tk["refusals"].append({"guard": e.get("guard"), "would": bool(e.get("would"))})
+            r = {"guard": e.get("guard"), "would": bool(e.get("would"))}
+            if str(e.get("detail") or "").startswith("carry-over"):
+                r["notice"] = True            # a carry-over notice, not a denial
+            tk["refusals"].append(r)
         elif ev == "summary":
             tk["summary"] = {k: e.get(k) for k in ("goal", "produced", "decisions", "open", "review_min")
                              if e.get(k) is not None}
@@ -261,6 +305,20 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
         tk["auto"] = auto
         res.append(_finish(tk, last_t, wf))
     return res
+
+
+def _track_helper(tk: dict, e: dict, t) -> None:
+    """Pair a helper interval with its agent id (helper_paired by tuid) and close it (helper_end)."""
+    aid = e["agent_id"]
+    if e.get("ev") == "helper_paired":
+        for h in tk["_hiv"]:
+            if h["aid"] is None and h["tuid"] and h["tuid"] == e.get("tuid"):
+                h["aid"] = aid
+        return
+    for h in reversed(tk["_hiv"]):
+        if h["aid"] == aid and h["end"] is None:
+            h["end"] = t
+            break
 
 
 def _add_cost(tk: dict, e: dict, agent_helper: dict) -> None:
@@ -363,7 +421,8 @@ def derive_v1(events: list[dict], areas: list[dict], wf: dict) -> list[dict]:
             "id": job, "src": "v1", "sid": None, "session_title": None, "title": title,
             "area": proj_area.get(project), "type": "coding", "playbook": None, "auto": False,
             "started": started, "ended": ended,
-            "duration_s": _secs(started, ended or last_t), "status": status,
+            "duration_s": _secs(started, ended or last_t), "span_s": _secs(started, ended or last_t),
+            "status": status,
             "crew": crew, "helpers": [{"helper": h, "count": 1, "labels": []} for h in crew],
             "rounds": {"needs_changes": nc, "budget": budget, "granted": 0,
                        "left": None if budget is None else max(0, budget - nc), "own": nc, "carried": 0},

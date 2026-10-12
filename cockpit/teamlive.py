@@ -70,9 +70,6 @@ AGENT_TYPE_ID = {
 # playbook command -> (type label, route). The route is the org chart's, in display ids.
 PLAYBOOKS = {
     "daily-review": ("Research", ["chief", "chief", "op", "writer", "inspector", "chief", "op"]),
-    "start-of-day": ("Product morning",
-                                   ["clerk", "chief", "op", "writer", "analyst", "builder", "inspector", "partner", "op"]),
-    "end-of-day": ("Product evening", ["clerk", "chief", "inspector", "chief", "op"]),
     "optimize-prompt": ("Sharpen an idea", ["chief", "scout", "chief", "op"]),
     "tune-up": ("Monthly tune-up", ["clerk", "chief", "chief", "op", "writer", "inspector"]),
     "personal-brand-advisor": ("Brand advice", []),
@@ -504,7 +501,7 @@ def _remaining_route(route: list[str], seen: list[str]) -> list[str]:
 
 def _analyse(sid: str, evs: list[dict], now: dt.datetime, cost_fn, helper_mtime_fn=None) -> dict:
     # a declaration made inside a helper is not the session's (the hook ignores it too): drop its type, area and plan_ref
-    evs = [e for e in evs if not (e.get("ev") == "WorkType" and e.get("in_agent"))] or evs
+    evs = [e for e in evs if not (e.get("ev") in ("WorkType", "TeamDone") and e.get("in_agent"))] or evs
     today0 = dt.datetime.combine(now.date(), dt.time())
     # --- lifecycle: working / idle / ended, and the working intervals for the timeline
     state = None                     # None until a prompt / activity / Stop tells otherwise
@@ -607,8 +604,11 @@ def _analyse(sid: str, evs: list[dict], now: dt.datetime, cost_fn, helper_mtime_
     # waiting (v2 attention bar): idle, and the last MAIN-session event is a Stop within WAITING_WINDOW
     # (the session finished its turn and is waiting for the person). Helper events do not count.
     last_main = next((e for e in reversed(evs) if not e.get("in_agent")
-                      and e.get("ev") not in ("SubagentStart", "SubagentStop")), None)
-    waiting = bool(not live and last_main is not None and last_main.get("ev") == "Stop"
+                      and e.get("ev") not in ("SubagentStart", "SubagentStop", "TeamDone")), None)
+    # done: the current task (since its latest opener) was closed by `: team-done` (a main-session TeamDone after
+    # the opener, no newer opener). A done session is never "waiting"; status, hiding and timelines are unchanged.
+    done = bool(anchor >= 0 and any(e.get("ev") == "TeamDone" and not e.get("in_agent") for e in evs[anchor + 1:]))
+    waiting = bool(not live and not done and last_main is not None and last_main.get("ev") == "Stop"
                    and now - last_main["_t"] <= WAITING_WINDOW)
     hidden = ended or (not live and now - last_t > IDLE_HIDE)
 
@@ -638,7 +638,7 @@ def _analyse(sid: str, evs: list[dict], now: dt.datetime, cost_fn, helper_mtime_
         "type": label, "tag": tag, "ask": ask, "playbook": cmd,
         "status": "working" if live else "idle", "chief_working": chief_working,
         "via_helpers": via_helpers, "live_helpers": live_helpers,
-        "cwd": cwd, "waiting": waiting, "area_arg": area_arg, "plan_ref": plan_ref,
+        "cwd": cwd, "waiting": waiting, "done": done, "area_arg": area_arg, "plan_ref": plan_ref,
         "since": _hhmm(t0), "idle_since": _hhmm(idle_since), "first_t": evs[0]["_t"], "last_t": last_t,
         "steps": steps, "working_helpers": working_helpers, "hidden": hidden, "segs": segs,
         "substantive": bool(helpers) or anchor >= 0,
@@ -704,7 +704,7 @@ def build_state(events: list[dict], now: dt.datetime, exclude_sids=(), cost_fn=N
     sessions.sort(key=lambda s: (s["status"] != "working", s["first_t"]))
     rows.sort(key=lambda r: r["start"])
     out_sessions = [{k: s[k] for k in ("sid", "title", "project", "type", "tag", "ask", "playbook", "status", "since",
-                                       "idle_since", "cost", "steps", "cwd", "waiting", "area_arg", "plan_ref",
+                                       "idle_since", "cost", "steps", "cwd", "waiting", "done", "area_arg", "plan_ref",
                                        "via_helpers", "live_helpers")} for s in sessions]
     all_segs = [g for r in rows for g in r["segs"]]
     ax_start = int(min([g[0] for g in all_segs] + [now.hour + now.minute / 60.0 - 1]))

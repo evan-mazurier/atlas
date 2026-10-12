@@ -14,6 +14,8 @@ and PostToolUse (Agent).
 
 Work-type declaration (CLAUDE.md "The team"): the orchestrator runs the no-op shell command
 `: team-type <type> [area] [task:<plan id>]` (Bash or PowerShell) at the start of a task; this hook records it.
+It closes a finished task with the no-op `: team-done`; this hook records a bare `TeamDone` event (ts/sid/cwd only),
+so the panel stops showing the session as "waiting". Neither is ever logged from a helper (agent_id).
 """
 import datetime as dt
 import json
@@ -23,6 +25,7 @@ import sys
 
 LOG_DIR = os.path.join(os.path.expanduser("~"), ".claude", "team-live")
 TYPE_RE = re.compile(r"^\s*:\s*team-type\s+([a-z][a-z0-9-]{0,30})(?:\s+([a-z][a-z0-9-]{0,15}))?(?:\s+task:(\S+))?\s*$", re.I)
+DONE_RE = re.compile(r"^\s*:\s*team-done\s*$", re.I)
 PLAN_REF_RE = re.compile(r"^(?:evt_[0-9a-f]{8}(?:@\d{4}-\d\d-\d\d)?|t_[0-9a-f]{8}|[A-Za-z0-9][A-Za-z0-9._-]{0,40}/[A-Za-z0-9][A-Za-z0-9._-]{0,60})$")
 
 
@@ -84,14 +87,18 @@ def main() -> None:
     elif ev == "PreToolUse" and tool in ("Bash", "PowerShell"):
         cmd = ti.get("command") or ""
         m = TYPE_RE.match(cmd) if len(cmd) <= 200 else None
-        if not m or d.get("agent_id"):
+        done = bool(DONE_RE.match(cmd)) if len(cmd) <= 200 else False
+        if (not m and not done) or d.get("agent_id"):
             return                                     # ordinary commands, and declarations from a helper, are never logged
-        rec["ev"] = "WorkType"
-        rec["type"] = m.group(1).lower()
-        if m.group(2):
-            rec["area"] = m.group(2).lower()
-        if m.group(3) and PLAN_REF_RE.match(m.group(3)):
-            rec["plan_ref"] = m.group(3)                 # a Plan item id, validated; free text is never logged
+        if done:
+            rec["ev"] = "TeamDone"                     # nothing else: no type, no text
+        else:
+            rec["ev"] = "WorkType"
+            rec["type"] = m.group(1).lower()
+            if m.group(2):
+                rec["area"] = m.group(2).lower()
+            if m.group(3) and PLAN_REF_RE.match(m.group(3)):
+                rec["plan_ref"] = m.group(3)             # a Plan item id, validated; free text is never logged
     else:
         return
 

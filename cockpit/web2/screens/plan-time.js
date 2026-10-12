@@ -1,8 +1,8 @@
 /* Plan screen: the two timelines (day view: lanes along x; week view: seven day columns along y)
    and the drag interactions on them. Looks follow docs/v2/charts-b.html ("Plan · Thursday"). */
 import {
-  AXIS_MIN, AXIS_MAX, EDIT_MIN, EDIT_MAX, fromMin, minToFrac, pointToSlot, inside, createRange, moveRange, resizeRange,
-  packRows, mineBlocks, allDayEvents, weekDays, dayShort, dowOf, recurText, clamp,
+  AXIS_MIN, AXIS_MAX, fromMin, minToFrac, pointToSlot, inside, moveRange, resizeRange,
+  layoutBlocks, areaVar, dayTotals, fmtHours, mineBlocks, allDayEvents, weekDays, dayShort, dowOf, recurText, clamp,
 } from "./plan-core.js";
 
 const ROW_H = 44;          // one row of the calendar in the day view
@@ -17,7 +17,7 @@ function mk(tag, cls, text, parent) {
   return e;
 }
 
-function areaCol(a) { return a ? "var(--a-" + a + ")" : "var(--ctx-2)"; }
+function areaCol(P, a) { return areaVar(P.ctx.areas, a); }
 
 /* ---------- entry point ---------- */
 export function renderTime(P, host) {
@@ -27,31 +27,37 @@ export function renderTime(P, host) {
   const ch = mk("div", "ch", null, host);
   const ct = mk("div", "ct", null, ch);
   mk("h3", null, S.view === "day" ? "Calendar" : "The week", ct);
-  mk("p", null, "07:00 to 22:00. Click or drag on empty time to add an event. Drag a task card onto the calendar to plan it.", ct);
+  mk("p", null, "07:00 to 22:00. Drag an event to move it, drag an edge to resize it, click it to edit.", ct);
+  if (S.view === "day") {
+    const t = dayTotals(S.data.events, S.day);
+    mk("p", "plan-tot mono", "work " + fmtHours(t.work) + "h · sessions " + fmtHours(t.sessions) + "h", ct);
+  }
   const lg = mk("div", "lg", null, ch);
-  ctx.kit.legend(lg, ctx.areas.map((a) => ({ name: a.name, color: "var(--a-" + a.id + ")" })).concat([{ name: "No area", color: "var(--ctx-2)" }]), "sq");
+  ctx.kit.legend(lg, ctx.areas.map((a) => ({ name: a.name, color: areaVar(ctx.areas, a.id) })).concat([{ name: "Unassigned", color: "var(--ctx-2)" }]), "sq");
   const body = mk("div", "cb plan-tl", null, host);
   if (S.view === "day") dayView(P, body); else weekView(P, body);
   const leg = mk("div", "pl-leg", null, host);
-  mk("span", "sep", "filled = event · tinted = project plan, read-only · outlined = review scheduled · line = now · hover or tap for details", leg);
+  mk("span", "sep", "filled = event · tinted = project plan, read-only · outlined = review scheduled · full width = full attention, split = sessions in parallel · line = now · hover or tap for details", leg);
 }
 
 /* ---------- blocks ---------- */
 function tipFor(P, b) {
   const { ctx } = P;
-  const an = b.area ? (ctx.areaName ? ctx.areaName(b.area) : b.area) : "No area";
+  const an = b.area ? (ctx.areaName ? ctx.areaName(b.area) : b.area) : "Unassigned";
   const span = b.sTxt + " to " + b.eTxt;
-  const rows = [{ key: "sq", color: areaCol(b.area), val: an }];
+  const rows = [{ key: "sq", color: areaCol(P, b.area), val: an }];
   if (b.kind === "ro") rows.push({ val: span, name: "read-only, from the project plan" });
   else if (b.kind === "review") rows.push({ val: span, name: "review" });
   else rows.push({ val: span, name: b.ev.recur ? recurText(b.ev.recur) : b.ev.task_of ? "planned task" : "event" });
+  if (b.kind !== "ro") rows.push({ val: b.full ? "full attention" : "shared, runs in parallel" });
+  if (b.ev && b.ev.done) rows.push({ val: "done" });
   if (b.ev && b.ev.notes) rows.push({ val: String(b.ev.notes), wrap: true });
   return { title: b.title, rows };
 }
 
 function decorate(P, el, b) {
   const { ctx, S } = P;
-  const col = areaCol(b.area);
+  const col = areaCol(P, b.area);
   el.style.setProperty("--blk-c", col);
   if (b.kind === "review") {
     el.classList.add("rv");
@@ -68,10 +74,31 @@ function decorate(P, el, b) {
   ctx.kit.bindTip(el, () => (S.drag ? null : tipFor(P, b)));
 }
 
-function fillBlock(el, b, short) {
+function shortOf(P, b) {
+  const a = ((P.S.data && P.S.data.areas) || []).find((x) => x.id === b.area);
+  return (a && a.short) || "";
+}
+
+/** A block too small for its time and title shows the area tag only (time and title in the tooltip):
+ *  a third of a week column, or 30 minutes or less on the day timeline. The tag is cut to three letters. */
+function tagOnly(P, b, orient) {
+  if (!shortOf(P, b)) return false;
+  return orient === "v" ? b.rows >= 3 : b.end - b.start <= 30;
+}
+
+/** The text of a block. Tag-only blocks: `SHORT`. Day view: the title. Week view: `SHORT · title`. */
+function labelFor(P, b, orient) {
+  const mark = b.ev && b.ev.done ? "✓ " : "";   // manual done mark
+  const short = shortOf(P, b);
+  if (!short) return mark + b.title;
+  if (tagOnly(P, b, orient)) return mark + short.slice(0, 3);
+  return mark + (orient === "v" ? short + " · " + b.title : b.title);
+}
+
+function fillBlock(el, b) {
   el.textContent = "";
   mk("div", "bs", b.sTxt + "–" + b.eTxt, el);      // the time range is always shown (first line); the title is clipped instead
-  mk("div", "bt", b.title, el);
+  mk("div", "bt", b.label || b.title, el);
 }
 
 function makeBlock(P, parent, b, orient, opts) {
@@ -82,9 +109,12 @@ function makeBlock(P, parent, b, orient, opts) {
   b.eTxt = fromMin(b.end);
   b.row = opts.row || 0;
   b.rows = opts.rows || 1;
-  const short = b.end - b.start <= 75;
+  b.span = opts.span || 1;
+  b.label = labelFor(P, b, orient);
   if (b.end - b.start <= 30) el.classList.add("tiny");
-  fillBlock(el, b, short);
+  if (b.ev && b.ev.done) el.classList.add("done");
+  if (tagOnly(P, b, orient)) el.classList.add("third");   // the area tag only, time and title in the tooltip
+  fillBlock(el, b);
   decorate(P, el, b);
   place(el, orient, b.start, b.end, opts);
   if (b.editable) {
@@ -106,7 +136,7 @@ function place(el, orient, start, end, o) {
     el.style.width = Math.max(0.3, z - a).toFixed(3) + "%";
     const row = o.row || 0;
     el.style.top = (4 + row * ROW_H) + "px";
-    el.style.height = (ROW_H - 8) + "px";
+    el.style.height = ((o.span || 1) * ROW_H - 8) + "px";       // a full-attention block spans every row
     el.style.bottom = "auto";
   } else {
     el.style.top = "calc(" + a.toFixed(3) + "% + 1px)";          // 1px inset top and bottom: neighbours stay distinguishable
@@ -134,7 +164,7 @@ function nowFrac(P, day) {
 function allDayChips(P, parent, day) {
   const list = allDayEvents(P.S.data, day);
   list.forEach((e) => {
-    const col = areaCol(e.area);
+    const col = areaCol(P, e.area);
     const b = mk("button", "plan-chip", e.title, parent);
     b.type = "button";
     b.style.borderColor = col;
@@ -166,16 +196,16 @@ function dayView(P, body) {
 
   // Calendar
   const mine = blocksFor(P, day);
-  const pk = packRows(mine);
-  const rows = Math.max(1, pk.rows);
+  const lay = layoutBlocks(mine);
+  const rows = lay.maxTracks;
   const rl = mk("div", "rl", null, left);
   rl.style.height = (rows * ROW_H + 8) + "px";
   mk("b", null, "Events", rl);
   const lane = mk("div", "lane plan-surface", null, mid);
   lane.style.height = (rows * ROW_H + 8) + "px";
   lane.style.backgroundSize = gridSize;
-  mine.forEach((b, i) => makeBlock(P, lane, b, "h", { row: pk.row[i] }));
-  if (!mine.length) mk("div", "plan-empty-lane", "Nothing planned. Click or drag here to add an event.", lane);
+  mine.forEach((b, i) => makeBlock(P, lane, b, "h", lay.pos[i].full ? { row: 0, span: rows } : { row: lay.pos[i].track, span: 1 }));
+  if (!mine.length) mk("div", "plan-empty-lane", "Nothing planned.", lane);
 
   mk("div", "nowrow", null, left);
   mk("div", "nowrow", null, mid);
@@ -198,9 +228,9 @@ const fitSig = new WeakMap();
 let fitObs = null, fitRaf = 0;
 
 function fitTiny(host, force) {
-  const els = Array.from(host.querySelectorAll(".plan-blk:not(.plan-ghost)")).filter((el) => el.querySelector(".bt") && el.querySelector(".bs"));
+  const els = Array.from(host.querySelectorAll(".plan-blk")).filter((el) => el.querySelector(".bt") && el.querySelector(".bs"));
   let sig = host.clientWidth + ":" + els.length;
-  els.forEach((el) => { sig += ":" + el.clientWidth + "x" + el.clientHeight + (el._b ? el._b.title + el._b.start + el._b.end : ""); });
+  els.forEach((el) => { sig += ":" + el.clientWidth + "x" + el.clientHeight + (el._b ? (el._b.label || el._b.title) + el._b.start + el._b.end : ""); });
   if (!force && fitSig.get(host) === sig) return;
   // pass 1 (writes): reset every block to its natural state, full time range
   els.forEach((el) => {
@@ -236,7 +266,7 @@ function fitTiny(host, force) {
     }
   });
   // pass 4 (reads), pass 5 (writes): one-row blocks whose title has no room
-  const rows = m.filter((x) => x.tiny || x.el.classList.contains("one")).map((x) => ({ x, w: x.bt.clientWidth }));
+  const rows = m.filter((x) => !x.el.classList.contains("third") && (x.tiny || x.el.classList.contains("one"))).map((x) => ({ x, w: x.bt.clientWidth }));   // a tag stays, clipped
   const cut = [];
   rows.forEach(({ x, w }) => {
     if (w >= 28) return;
@@ -304,9 +334,9 @@ function weekView(P, body) {
     c.dataset.day = d;
     const op = mk("div", "plan-op", null, c);        // the operator area: blocks are placed in % of this box
     const mine = blocksFor(P, d);
-    const pk = packRows(mine);
+    const lay = layoutBlocks(mine);
     mine.forEach((b, i) => {
-      const el = makeBlock(P, op, b, "v", { row: pk.row[i], rows: pk.rows });
+      const el = makeBlock(P, op, b, "v", { row: lay.pos[i].track, rows: lay.pos[i].tracks });
       b.dayIdx = days.indexOf(d);
       el.classList.add("v");
     });
@@ -347,8 +377,6 @@ function wireSurface(P, sf) {
       if (!b || !b.editable) return;
       const edge = e.target.dataset && e.target.dataset.edge;
       begin(P, sf, e, edge ? "resize-" + edge : "move", b);
-    } else if (!e.target.closest("button")) {
-      begin(P, sf, e, "create", null);
     }
   });
 }
@@ -368,44 +396,29 @@ function begin(P, sf, e, mode, b) {
   const D = { mode, b, x0: e.clientX, y0: e.clientY, start, moved: false, result: null };
   S.drag = D;
   const orient = sf.orient;
-  let ghost = null;
-  if (mode === "create") {
-    ghost = mk("div", "blk plan-blk plan-ghost" + (orient === "v" ? " v" : ""), null, sf.colEls[start.col]);
-    ghost.hidden = true;
-  } else {
-    b.el.classList.add("dragging");
-  }
+  b.el.classList.add("dragging");
 
-  const startDayIdx = mode === "create" ? start.col : (b.dayIdx || 0);
+  const startDayIdx = b.dayIdx || 0;
   const onMove = (ev) => {
     const moved = D.moved || Math.hypot(ev.clientX - D.x0, ev.clientY - D.y0) > 4;
     if (!moved) return;
     D.moved = true;
     const slot = pointToSlot(rect, ev.clientX, ev.clientY);
-    if (mode === "create") {
-      const r = createRange(start.min, slot.min);
-      D.result = { day: sf.days[start.col], start: r.start, end: r.end };
-      ghost.hidden = false;
-      place(ghost, orient, r.start, r.end, { row: 0 });
-      if (orient === "h") { ghost.style.top = "4px"; ghost.style.height = (ROW_H - 8) + "px"; }
-      else { ghost.style.left = "1px"; ghost.style.width = "calc(100% - 2px)"; }
-      ghost.textContent = "";
-      mk("div", "bs", fromMin(r.start) + "–" + fromMin(r.end), ghost);
-    } else if (mode === "move") {
+    if (mode === "move") {
       const dMin = slot.min - start.min;
       const r = moveRange(b.start, b.end, dMin);
       let idx = startDayIdx;
       if (orient === "v") idx = clamp(startDayIdx + (slot.col - start.col), 0, sf.days.length - 1);
       D.result = { day: sf.days[idx], start: r.start, end: r.end };
       if (orient === "v" && b.el.parentNode !== sf.colEls[idx]) { sf.colEls[idx].appendChild(b.el); }
-      place(b.el, orient, r.start, r.end, orient === "h" ? { row: b.row } : { row: 0, rows: 1 });
+      place(b.el, orient, r.start, r.end, orient === "h" ? { row: b.row, span: b.span || 1 } : { row: 0, rows: 1 });
       posLabel(b.el, r.start, r.end);
     } else {
       const edge = mode === "resize-start" ? "start" : "end";
       const dMin = slot.min - start.min;
       const r = resizeRange(b.start, b.end, edge, dMin);
       D.result = { day: b.day, start: r.start, end: r.end };
-      place(b.el, orient, r.start, r.end, { row: b.row, rows: b.rows });
+      place(b.el, orient, r.start, r.end, { row: b.row, rows: b.rows, span: b.span || 1 });
       posLabel(b.el, r.start, r.end);
     }
   };
@@ -414,16 +427,10 @@ function begin(P, sf, e, mode, b) {
     document.removeEventListener("pointerup", onUp);
     document.removeEventListener("pointercancel", onCancel);
     S.drag = null;
-    if (ghost) ghost.remove();
-    if (b) b.el.classList.remove("dragging");
+    b.el.classList.remove("dragging");
     if (cancelled) { P.paint(); P.dragEnded(); return; }
     if (!D.moved) {
-      if (mode === "create") {
-        const r = createRange(start.min, start.min);
-        P.openForm({ mode: "new", day: sf.days[start.col], start: r.start, end: r.end });
-      } else if (b && b.ev) {
-        P.openForm({ mode: "edit", ev: b.ev });
-      }
+      if (b.ev) P.openForm({ mode: "edit", ev: b.ev });
       P.dragEnded();
       return;
     }
@@ -438,11 +445,6 @@ function begin(P, sf, e, mode, b) {
 
 function commit(P, mode, b, r) {
   if (!r) { P.paint(); P.dragEnded(); return; }
-  if (mode === "create") {
-    P.openForm({ mode: "new", day: r.day, start: r.start, end: r.end });
-    P.dragEnded();
-    return;
-  }
   const ev = b.ev;
   const to = { day: r.day, start: fromMin(r.start), end: fromMin(r.end) };
   const unchanged = r.day === ev.day && r.start === b.start && r.end === b.end;

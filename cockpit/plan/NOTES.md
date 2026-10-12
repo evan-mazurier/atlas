@@ -33,8 +33,10 @@ Files: `store.py` (paths, locks, atomic write, section splice), `versions.py` (p
   by GET and by the review endpoints only; a new `rv:` key is stamped with the current version
   without a bump (it comes from the ledger, not from a hand edit).
 * First run (no version file): everything is baselined at version 1 with no bump.
-* The v1 collision guard is kept (same reason text) but only runs when an event's `day/start/end/busy`
-  is new or changed, so a notes-only edit on a legacy overlapping event is not refused.
+* The v1 busy-overlap rule between events was replaced (2026-10-11, parallel planning) by the attention guard
+  (`api._attention_reason`, below). `schedmath.collision` still runs, with the events taken out, for placements,
+  availability blocks and full days (old reason text). The guard only runs when an event's `day/start/end/busy` or its
+  effective attention is new or changed, so a notes-only edit on a legacy overlapping event is not refused.
 * Unknown ids -> 404 (v1 delete was a silent no-op). Event type outside `appointment|errand|personal|free`
   becomes `personal` (v1 rule). `start` without `end` (or the reverse) -> 400 (v1 silently dropped both).
 * Cross-day move of one occurrence: answer `changed` = the NEW event; the updated series is in the
@@ -58,6 +60,17 @@ Files: `store.py` (paths, locks, atomic write, section splice), `versions.py` (p
   (GET and writes), never silently reset to version 1. Delete the file by hand to start over.
 * Comments inside a section that is being rewritten are NOT preserved (the section is re-serialised);
   all other sections, and the comments around them, stay byte-identical.
+
+## Parallel planning (2026-10-11)
+* `areas.yaml` keys `attention` (shared|full, absent = full), `attention_fixed`, `short`; events may carry `attention`
+  (stored only when set). `model.effective_attention(ev, areas)` = fixed area value, else the event's, else the area's, else
+  full (source `fixed|event|area|default`), using the same area resolution as the read path (`event_area`).
+* `MAX_PARALLEL = 3` in `model.py`. Guard (`api._attention_reason`) over the other timed busy occurrences of the day
+  (`expand_events`: recurrence, skips, overrides; `busy: false` and all-day ignored): a full event overlaps nothing; a shared
+  one overlaps no full event and at most 3 shared ones run at any instant (the refusal names the merged stretch).
+* Applies to event upsert, event/move (also occurrence overrides and cross-day occurrence moves), task/place "me" and
+  review/schedule, because they all go through `_event_guard` / `_slot_reason`.
+* The screen no longer creates events; sessions do, through `tools/plan_day.py` (contracts.md 5.3).
 
 ## Screen review changes (2026-10-09)
 * Window 07:00-22:00 (`model.DAY_START_MIN/DAY_END_MIN`) and the all-day rule live in `api._event_guard`; `schedmath.collision`

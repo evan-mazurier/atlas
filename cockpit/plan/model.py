@@ -27,6 +27,8 @@ TRAY_DAYS = 30
 DAY_START_MIN = 7 * 60          # the Plan day: 07:00 to 22:00 (sleep hours are not planned)
 DAY_END_MIN = 22 * 60
 MAX_AGENT_LANES = 3
+MAX_PARALLEL = 3                # shared (parallel-session) events that may overlap at any instant
+ATTENTIONS = ("shared", "full")
 
 
 # ── areas ──────────────────────────────────────────────────────────────────────────────────────
@@ -81,6 +83,25 @@ def event_area(ev: dict, areas: list[dict]) -> tuple[str | None, str]:
             if re.search(r"(?<!\w)" + re.escape(_fold(k)) + r"(?!\w)", title):
                 return a["id"], "match"
     return None, "none"
+
+
+def area_attention(a: dict | None) -> str:
+    v = (a or {}).get("attention")
+    return v if v in ATTENTIONS else "full"
+
+
+def effective_attention(ev: dict, areas: list[dict]) -> tuple[str, str]:
+    """(attention, source). The area's value when it is fixed; else the event's own; else the area's;
+    else full. Source: fixed | event | area | default. Same area resolution as the read path."""
+    aid, _ = event_area(ev, areas)
+    a = next((x for x in areas if x.get("id") == aid), None) if aid else None
+    if a and a.get("attention_fixed") is True:
+        return area_attention(a), "fixed"
+    if ev.get("attention") in ATTENTIONS:
+        return ev["attention"], "event"
+    if a and a.get("attention") in ATTENTIONS:
+        return a["attention"], "area"
+    return "full", "default"
 
 
 # ── time helpers ───────────────────────────────────────────────────────────────────────────────
@@ -142,10 +163,14 @@ def expand_events(events: list, frm: dt.date, to: dt.date, areas: list[dict]) ->
                     ov = (ev.get("overrides") or {}).get(iso) if isinstance(ev.get("overrides"), dict) else None
                     if isinstance(ov, dict):
                         start, end = valid_hhmm(ov.get("start")) or start, valid_hhmm(ov.get("end")) or end
+                    att, att_src = effective_attention(ev, areas)
                     row = {"id": ev["id"], "occurrence": iso, "title": ev.get("title"), "day": iso,
                            "start": start, "end": end, "area": area, "area_source": source,
                            "type": ev.get("type") or "personal", "recur": recur,
-                           "notes": ev.get("notes")}
+                           "notes": ev.get("notes"), "attention": att, "attention_source": att_src}
+                    done_on = ev.get("done_on") if isinstance(ev.get("done_on"), list) else []
+                    if ev.get("done") is True or iso in [str(d) for d in done_on]:
+                        row["done"] = True
                     for k in ("busy", "review_of", "from_series", "location", "remind", "task_of"):
                         if k in ev:
                             row[k] = ev[k]
@@ -416,7 +441,9 @@ def build(sched: dict, tdoc: dict, frm: dt.date, to: dt.date, version: int, runs
                 r.pop("planned", None)
     tray = review_tray(runs if tray_src is None else tray_src, tdoc.get("reviews") or [], sched.get("events") or [])
     return {"ok": True, "version": version, "today": dt.date.today().isoformat(),
-            "areas": [{"id": a["id"], "name": a.get("name"), "color": a.get("color")} for a in areas],
+            "areas": [{"id": a["id"], "name": a.get("name"), "color": a.get("color"),
+                      "attention": area_attention(a), "attention_fixed": a.get("attention_fixed") is True,
+                      "short": a.get("short") or str(a["id"]).upper()[:5]} for a in areas],
             "events": events, "placements": placements, "work_blocks": blocks,
             "availability": availability,
             "agents": agents_lanes(frm, to, own, areas, runs),

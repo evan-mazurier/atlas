@@ -2,7 +2,7 @@
    Lines 1.5 px, 1 px solid grid, bars <= 16 px, one end dot, figures in Geist Mono, colour = area or
    model only, tooltip on hover or tap. The v1 look (thick lines, gradients, dots on every point,
    donuts) is not available here. */
-import { fmtT, hm, pad2 } from "./format.js";
+import { fmtT, hm, pad2, areaVar } from "./format.js";
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -321,11 +321,11 @@ export function meterCell(pct) {
     H("span", null, pct + " %", mc);
   };
 }
-export function areaCell(areaId, areaName) {
+export function areaCell(areaId, areaName, isKnown) {
   return (td) => {
     const a = H("span", "ar", null, td);
     const s = H("i", "sw", null, a);
-    s.style.background = areaId ? "var(--a-" + areaId + ")" : "var(--ctx-2)";
+    s.style.background = areaVar(areaId, isKnown);
     H("span", null, areaName || "Unassigned", a);
   };
 }
@@ -390,7 +390,7 @@ export function onColor(color) {
   const L = lum(c), Li = lum(ink), Lb = lum(bg);
   return (Li + 0.05) / (L + 0.05) >= (L + 0.05) / (Lb + 0.05) ? "var(--ink)" : "var(--bg)";
 }
-function blockColor(b) { return b.color || (b.area ? "var(--a-" + b.area + ")" : "var(--ctx-1)"); }
+function blockColor(b) { return b.color || (b.area ? areaVar(b.area) : "var(--ctx-1)"); }
 
 /**
  * timelineLanes(host, {start_h, end_h, lanes: [{label, right?, blocks: [{start, end, area|color, title, sub, kind}]}],

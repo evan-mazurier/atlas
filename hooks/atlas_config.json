@@ -1,5 +1,6 @@
 {
   "mode": "record",
+  "plan_url": "http://127.0.0.1:8765",
   "ledger_dir": null,
   "workflows_file": "<repo>\\workflows.yaml",
   "areas_file": "<repo>\\areas.yaml",

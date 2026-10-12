@@ -38,6 +38,7 @@
 @keyframes run{to{left:24px}}
 .team-idle{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-3);padding:9px 14px;color:var(--muted);font-size:13px}
 .team-idle b{color:var(--ink-2);font-weight:500}
+.team-done{font-size:12px;color:var(--muted)}
 .team-wait{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
 .team-via{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
 .team-via-names{font-size:12px;color:var(--muted);overflow-wrap:anywhere}

@@ -39,16 +39,6 @@ test("resizeRange moves one edge and keeps a minimum length", () => {
   assert.deepEqual(C.resizeRange(600, 660, "end", 5000), { start: 600, end: 1320 });
 });
 
-test("createRange: a click gives the default hour, a drag gives the dragged range", () => {
-  assert.deepEqual(C.createRange(603, 604), { start: 600, end: 660 });
-  assert.deepEqual(C.createRange(600, 690), { start: 600, end: 690 });
-  assert.deepEqual(C.createRange(690, 600), { start: 600, end: 690 });
-  const late = C.createRange(1375, 1375);
-  assert.ok(late.end <= 1320 && late.end - late.start >= 15);
-  const early = C.createRange(100, 100);
-  assert.equal(early.start, 420);
-});
-
 test("time to fraction and back", () => {
   assert.equal(C.minToFrac(420), 0);
   assert.equal(C.minToFrac(1320), 1);
@@ -72,15 +62,48 @@ test("pointToSlot: day view runs time along x, week view along y with 7 columns"
   assert.ok(!C.inside(wk, 10, 50));
 });
 
-test("packRows puts overlapping blocks in separate rows", () => {
-  const p = C.packRows([{ start: 600, end: 660 }, { start: 630, end: 700 }, { start: 660, end: 720 }, { start: 800, end: 830 }]);
-  assert.equal(p.rows, 2);
-  assert.notEqual(p.row[0], p.row[1]);
-  assert.equal(p.row[2], p.row[0]);
-  assert.equal(p.row[3], 0);
-  assert.deepEqual(C.packRows([]), { row: [], rows: 0 });
+test("layoutBlocks: shared blocks split their cluster's width, full blocks span", () => {
+  const sh = (start, end) => ({ start, end, full: false });
+  const fu = (start, end) => ({ start, end, full: true });
+  // two overlapping shared blocks: 2 tracks; a later lone one: 1 track
+  let l = C.layoutBlocks([sh(540, 600), sh(570, 630), sh(700, 760)]);
+  assert.deepEqual(l.pos.map((p) => [p.track, p.tracks]), [[0, 2], [1, 2], [0, 1]]);
+  assert.equal(l.maxTracks, 2);
+  assert.equal(l.clusters.length, 2);
+  // staggered: A 9-12, B 9-10, C 10-11, D 10-11 => one cluster of 3 tracks (every member 1/3 wide)
+  l = C.layoutBlocks([sh(540, 720), sh(540, 600), sh(600, 660), sh(600, 660)]);
+  assert.equal(l.clusters.length, 1);
+  assert.equal(l.maxTracks, 3);
+  assert.ok(l.pos.every((p) => p.tracks === 3));
+  assert.equal(l.pos[2].track === l.pos[3].track, false);
+  // a full block spans, shared blocks around it keep their own clusters
+  l = C.layoutBlocks([fu(480, 540), sh(600, 660), sh(630, 690)]);
+  assert.equal(l.pos[0].full, true);
+  assert.equal(l.pos[0].tracks, 1);
+  assert.deepEqual([l.pos[1].tracks, l.pos[2].tracks], [2, 2]);
+  // legacy: a full block overlapping something => everything is packed, nothing hidden
+  l = C.layoutBlocks([fu(540, 660), sh(600, 700)]);
+  assert.equal(l.legacy, true);
+  assert.deepEqual(l.pos.map((p) => [p.full, p.tracks]), [[false, 2], [false, 2]]);
+  assert.deepEqual(C.layoutBlocks([]), { pos: [], clusters: [], maxTracks: 1, legacy: false });
 });
 
+test("dayTotals: shared events only; work is the union, sessions the sum; fmtHours drops .0", () => {
+  const ev = (start, end, extra) => Object.assign({ day: "2026-10-12", start, end, attention: "shared" }, extra);
+  const t = C.dayTotals([ev("09:00", "12:00"), ev("10:00", "11:00"), ev("11:30", "13:00"), ev("15:00", "16:00", { busy: false }),
+    { day: "2026-10-12", title: "all day" }, ev("09:00", "10:00", { day: "2026-10-13" }), ev("07:00", "08:00", { attention: "full" })], "2026-10-12");
+  assert.deepEqual(t, { work: 240, sessions: 330 });
+  assert.equal(C.fmtHours(240), "4");
+  assert.equal(C.fmtHours(330), "5.5");
+  assert.equal(C.fmtHours(0), "0");
+  assert.deepEqual(C.dayTotals([], "2026-10-12"), { work: 0, sessions: 0 });
+});
+
+test("mineBlocks: full unless the event says shared; placements are full", () => {
+  const data = { events: [{ id: "a", day: "d", start: "09:00", end: "10:00", attention: "shared" }, { id: "b", day: "d", start: "10:00", end: "11:00" }],
+    placements: [{ day: "d", start: "12:00", end: "13:00", task: "t" }] };
+  assert.deepEqual(C.mineBlocks(data, "d").map((b) => b.full), [false, true, true]);
+});
 test("dates: week days start on Monday, labels, ranges", () => {
   assert.equal(C.mondayOf("2026-10-09"), "2026-10-05");
   assert.equal(C.mondayOf("2026-10-11"), "2026-10-05");
@@ -261,32 +284,10 @@ test("tasksByState: five columns in state order, hidden areas left out, area kep
   assert.equal(C.STATE_LABELS.review, "Pending review");
 });
 
-test("taskLen: the estimate on the grid, 60 when unknown, never longer than the day", () => {
-  assert.equal(C.taskLen({ estimate_min: 90 }), 90);
-  assert.equal(C.taskLen({ estimate_min: 50 }), 60);
-  assert.equal(C.taskLen({ estimate_min: null }), 60);
-  assert.equal(C.taskLen({}), 60);
-  assert.equal(C.taskLen({ estimate_min: 5000 }), 900);
-});
-
-test("plannedLabel and setPlanned", () => {
+test("plannedLabel", () => {
   assert.equal(C.plannedLabel({ day: "2026-10-12", start: "10:00", end: "11:30" }), "planned Mon 10:00");
   assert.equal(C.plannedLabel(null), "");
   assert.equal(C.plannedLabel({ day: "bad", start: "10:00" }), "");
-  const tasks = { md: [{ id: "1", state: "todo" }], job: [{ id: "2" }] };
-  const p = C.setPlanned(tasks, "1", { day: "2026-10-12", start: "10:00", end: "11:00", on: "me" });
-  assert.equal(p.md[0].planned.start, "10:00");
-  assert.equal(p.md[0].state, "todo");
-  assert.equal(tasks.md[0].planned, undefined);
-  assert.equal(C.setPlanned(p, "1", null).md[0].planned, undefined);
-  assert.equal(C.findTask(tasks, "2").area, "job");
-});
-
-test("placeReason: any open task goes on the calendar (agents' tasks and project-plan tasks too); finished tasks never", () => {
-  assert.equal(C.placeReason({ owner: "me", state: "todo", id: "t1" }), "");
-  assert.equal(C.placeReason({ owner: "agents", state: "next", id: "t2" }), "");
-  assert.equal(C.placeReason({ owner: "agents", state: "next", id: "p/t2", source: "plan.yaml" }), "");
-  assert.match(C.placeReason({ owner: "me", state: "done", id: "t3" }), /finished/);
 });
 
 test("the agents' lane is parked: no agents helpers are exported from plan-core", () => {
@@ -299,4 +300,23 @@ test("allDayTitleOn: an all-day event blocks its day for new events, not for its
   assert.equal(C.allDayTitleOn(evs, "2026-10-09", null), "Trip");
   assert.equal(C.allDayTitleOn(evs, "2026-10-09", "a"), "");
   assert.equal(C.allDayTitleOn(evs, "2026-10-10", null), "");
+});
+
+test("areaVar: a known area gets its token, an unknown or empty id the neutral Unassigned colour", () => {
+  const areas = [{ id: "job" }];
+  assert.equal(C.areaVar(areas, "job"), "var(--a-job)");
+  assert.equal(C.areaVar(areas, "md"), "var(--ctx-2)");
+  assert.equal(C.areaVar(areas, null), "var(--ctx-2)");
+  assert.equal(C.areaVar(areas, undefined), "var(--ctx-2)");
+});
+
+test("unassignedTasks and tasksByState: tasks under an unknown area appear as Unassigned, after the known areas", () => {
+  const areas = [{ id: "job" }];
+  const tasks = { job: [{ id: "a", state: "todo" }], md: [{ id: "b", state: "todo" }, { id: "c", state: "done" }], zz: [] };
+  const u = C.unassignedTasks(tasks, areas);
+  assert.deepEqual(u.map((t) => [t.id, t.area]), [["b", "md"], ["c", "md"]]);
+  const g = C.tasksByState(tasks, areas, { job: true });
+  assert.deepEqual(g.todo.map((t) => t.id), ["b"]);       // hiding a known area never hides Unassigned
+  assert.deepEqual(g.done.map((t) => t.id), ["c"]);
+  assert.deepEqual(C.tasksByState(tasks, areas, {}).todo.map((t) => t.id), ["a", "b"]);
 });

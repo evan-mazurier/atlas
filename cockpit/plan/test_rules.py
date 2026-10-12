@@ -117,9 +117,9 @@ def test_keywords_are_whole_words_only():
 
 
 def test_prefix_first_then_keywords_file_order_explicit_wins():
-    assert area_of("Product study") == ("md", "match")           # prefix beats the Training keyword
+    assert area_of("Product study") == ("md", "match")           # prefix beats the Learning keyword
     assert area_of("Atlas paper study") == ("job", "match")              # keywords: first area in file order
-    assert area_of("Swim", area="pers") == ("pers", "explicit")
+    assert area_of("Study", area="pers") == ("pers", "explicit")
 
 
 def test_api_events_carry_the_keyword_area(api):
@@ -161,7 +161,7 @@ def test_place_me_refusals_are_visible_reasons(api):
     assert place(api, "t_missing", "me")[0] == 404
     post_ev(api, title="Busy", day=DAY, start="10:00", end="12:00")
     code, out = place(api, t["id"], "me")
-    assert code == 400 and "collides with Busy" in out["error"]
+    assert code == 400 and "overlaps 'Busy' (10:00-12:00)" in out["error"]
     api.post("event", {"base": api.version(), "event": {"title": "Trip", "day": "2027-04-08"}})
     code, out = place(api, t["id"], "me", day="2027-04-08")
     assert code == 400 and "all-day event 'Trip'" in out["error"]
@@ -247,7 +247,7 @@ def test_existing_timed_event_can_be_retimed_on_an_all_day_day_but_real_overlaps
     code, out = api.post("event/move", {"base": api.version(), "id": a["id"], "day": DAY, "start": "10:30", "end": "11:30"})
     assert code == 200, out
     code, out = api.post("event/move", {"base": api.version(), "id": a["id"], "day": DAY, "start": "13:30", "end": "14:30"})
-    assert code == 400 and "collides with B" in out["error"]
+    assert code == 400 and "overlaps 'B' (13:00-14:00)" in out["error"]
 
 
 def test_place_refuses_a_done_task(api):

@@ -65,7 +65,8 @@ export default {
         <span class="team-meta">since <b>${esc(L.since)}</b><br>so far <b>${tokens(L.cost)}</b> tok</span></div><div class="team-flow">${steps}</div>`;
     }
     function idleHtml(L) {
-      const wait = L.waiting ? `<span class="team-wait"><span class="dot" style="color:var(--warn)">●</span> waiting</span>` : "";
+      const wait = L.waiting ? `<span class="team-wait"><span class="dot" style="color:var(--warn)">●</span> waiting</span>`
+        : L.done ? `<span class="team-done">done</span>` : "";
       const name = L.plan_title || L.title;
       return (name
         ? `<b>${esc(name)}</b><span>${esc(L.type)}</span>`
@@ -80,7 +81,7 @@ export default {
       sessions.forEach((s) => {
         const working = s.status === "working";
         want.push({ key: s.sid, cls: working ? "team-lane hot" : "team-idle", html: working ? laneHtml(s) : idleHtml(s),
-          sig: JSON.stringify([s.status, s.waiting, s.area, s.title, s.plan_title, s.type, s.tag, s.project, s.since, s.idle_since, s.cost, s.steps, s.via_helpers, s.live_helpers]) });
+          sig: JSON.stringify([s.status, s.waiting, s.done, s.area, s.title, s.plan_title, s.type, s.tag, s.project, s.since, s.idle_since, s.cost, s.steps, s.via_helpers, s.live_helpers]) });
       });
       const have = new Map();
       Array.from(lanesEl.children).forEach((c) => have.set(c.dataset.key, c));

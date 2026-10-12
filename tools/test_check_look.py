@@ -122,6 +122,18 @@ def test_duplicate_ids_empty_names_and_bad_hex_fail(tmp_path):
     assert any("#rrggbb" in x for x in problems)
 
 
+def test_attention_keys_are_validated(tmp_path):
+    def run(extra):
+        p = tmp_path / "areas.yaml"
+        p.write_text(f'areas:\n  - {{id: a, name: A, color: "#d95926", {extra}}}\n', encoding="utf-8")
+        return cl.check_areas(p)
+    assert run("attention: shared, attention_fixed: true, short: ATL") == []
+    assert any("attention" in x for x in run("attention: maybe"))
+    assert any("attention_fixed" in x for x in run('attention_fixed: "yes"'))
+    for bad in ("A", "TOOLONG", "md", "A1"):
+        assert any("short" in x for x in run(f"short: {bad}")), bad
+
+
 def test_unparseable_yaml_fails(tmp_path):
     p = tmp_path / "areas.yaml"
     p.write_text("areas: [unclosed", encoding="utf-8")

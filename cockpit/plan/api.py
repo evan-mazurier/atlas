@@ -262,23 +262,61 @@ def _all_day_title(ctx: Ctx, day: str, exclude_id: str | None) -> str | None:
     return None
 
 
-def _collision(ctx: Ctx, day: str, start: str, end: str, eid: str, stays: bool) -> str | None:
-    """schedmath.collision. An existing event that keeps its day may be retimed on a day that has an
-    all-day event: the all-day events are left out of the check, real overlaps are still refused."""
-    sched = ctx.sched
-    if stays and _all_day_title(ctx, day, eid):
-        sched = dict(sched)
-        sched["events"] = [e for e in (sched.get("events") or []) if isinstance(e, dict) and e.get("start") and e.get("end")]
-    return schedmath.collision(sched, day, start, end, exclude_event_id=eid)
+def _attention_reason(ctx: Ctx, ev: dict, day: str, start: str, end: str, eid: str) -> str | None:
+    """The parallel-planning guard (contracts.md 5.3) over the other timed busy occurrences of `day`
+    (recurrences expanded, overrides and skips applied, `eid` left out). A FULL event overlaps nothing;
+    a SHARED one overlaps no FULL event and at most MAX_PARALLEL shared ones run at any instant."""
+    d = dt.date.fromisoformat(day)
+    s0, e0 = model._min(start), model._min(end)
+    mine = model.effective_attention(ev, ctx.areas)[0]
+    name = ev.get("title") or eid
+    full, shared = [], []
+    for r in model.expand_events(ctx.sched.get("events") or [], d, d, ctx.areas):
+        if r["id"] == eid or not (bool(r["busy"]) if "busy" in r else True):
+            continue
+        a, b = model._min(r.get("start")), model._min(r.get("end"))
+        if a is None or b is None or b <= a:
+            continue                                  # all-day: not a timed event
+        (full if r["attention"] == "full" else shared).append((a, b, str(r.get("title") or r["id"])))
+    span = lambda a, b: f"{model._hhmm(a)}-{model._hhmm(b)}"  # noqa: E731
+    if mine == "full":
+        for a, b, t in sorted(full + shared):
+            if a < e0 and b > s0:
+                return f"overlaps {t!r} ({span(a, b)}); {name!r} needs full attention"
+        return None
+    for a, b, t in sorted(full):
+        if a < e0 and b > s0:
+            return f"overlaps {t!r} ({span(a, b)}), which needs full attention"
+    cuts = sorted({x for a, b, _ in shared for x in (a, b)})
+    busy_runs: list = []
+    for a, b in zip(cuts, cuts[1:]):
+        if sum(1 for x, y, _ in shared if x < b and y > a) >= model.MAX_PARALLEL:
+            if busy_runs and busy_runs[-1][1] == a:
+                busy_runs[-1][1] = b
+            else:
+                busy_runs.append([a, b])
+    for a, b in busy_runs:
+        if a < e0 and b > s0:
+            return f"{model.MAX_PARALLEL} sessions already run in parallel {span(a, b)}"
+    return None
+
+
+def _slot_reason(ctx: Ctx, ev: dict, day: str, start: str, end: str, eid: str) -> str | None:
+    """schedmath.collision against placements, availability blocks and full days (old reason text),
+    then the attention guard against the other events. Events are left out of the schedmath check."""
+    sched = dict(ctx.sched)
+    sched["events"] = []
+    return schedmath.collision(sched, day, start, end, exclude_event_id=eid) or _attention_reason(ctx, ev, day, start, end, eid)
 
 
 def _event_guard(ctx: Ctx, ev: dict, old: dict | None, verb: str = "save") -> None:
-    """Checked only when the day/time/busy fields are new or changed (a notes-only edit on a legacy
-    event is not refused): the 07:00-22:00 window; a day that already has an all-day event takes no NEW
-    event (timed or all-day); an all-day event is never busy-checked; a timed busy event may not land on
-    busy time (v1 guard, kept)."""
+    """Checked only when the day/time/busy/attention fields are new or changed (a notes-only edit on a
+    legacy event is not refused): the 07:00-22:00 window; a day that already has an all-day event takes no
+    NEW event (timed or all-day); an all-day event is never busy-checked; a timed busy event may not land
+    on a placement or unavailable time, and obeys the attention rules (_attention_reason)."""
     busy = bool(ev.get("busy")) if "busy" in ev else True
-    sig = lambda e: (e.get("day"), e.get("start"), e.get("end"), bool(e.get("busy")) if "busy" in e else True)  # noqa: E731
+    sig = lambda e: (e.get("day"), e.get("start"), e.get("end"), bool(e.get("busy")) if "busy" in e else True,  # noqa: E731
+                     model.effective_attention(e, ctx.areas)[0])
     if old is not None and sig(old) == sig(ev):
         return
     name = ev.get("title") or ev["id"]
@@ -293,8 +331,7 @@ def _event_guard(ctx: Ctx, ev: dict, old: dict | None, verb: str = "save") -> No
             raise PlanError(400, f"can't {verb} {name!r}: {ev['day']} already has the all-day event {other!r}")
     if not timed or not busy:
         return
-    stays = old is not None and old.get("day") == ev.get("day")
-    reason = _collision(ctx, ev["day"], ev["start"], ev["end"], ev["id"], stays)
+    reason = _slot_reason(ctx, ev, ev["day"], ev["start"], ev["end"], ev["id"])
     if reason:
         raise PlanError(400, f"can't {verb} {name!r}: {reason}")
 
@@ -305,7 +342,7 @@ def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str) -> dict:
     for k, v in req.items():
         if k == "id":
             continue
-        if v is None or (v == "" and k in ("start", "end", "notes", "location", "remind", "area")):
+        if v is None or (v == "" and k in ("start", "end", "notes", "location", "remind", "area", "attention")):
             if k in ("start", "end"):
                 touches_time = True
             out.pop(k, None)
@@ -327,6 +364,10 @@ def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str) -> dict:
             if str(v) not in ctx.area_ids:
                 raise PlanError(400, f"unknown area: {v!r}")
             out[k] = str(v)
+        elif k == "attention":
+            if v not in model.ATTENTIONS:
+                raise PlanError(400, f"attention must be one of {', '.join(model.ATTENTIONS)}")
+            out[k] = v
         elif k == "busy":
             out[k] = bool(v)
         elif k == "recur":
@@ -344,6 +385,11 @@ def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str) -> dict:
         raise PlanError(400, "event requires a valid day (YYYY-MM-DD)")
     if touches_time and bool(out.get("start")) != bool(out.get("end")):
         raise PlanError(400, "start and end go together (or neither for an all-day event)")
+    if req.get("attention"):
+        aid, _ = model.event_area(out, ctx.areas)
+        area = next((a for a in ctx.areas if a["id"] == aid), None)
+        if area and area.get("attention_fixed") is True and out["attention"] != model.area_attention(area):
+            raise PlanError(400, f"can't save {out['title']!r}: {area.get('name') or area['id']} is always {model.area_attention(area)}")
     if stored is None and "type" not in out:
         out["type"] = "personal"
     if stored is None:
@@ -422,7 +468,7 @@ def h_event_move(ctx: Ctx, body: dict):
         if day == occ:
             if not (start and end):
                 raise PlanError(400, "start and end required to retime one occurrence")
-            reason = _window_reason(start, end) or _collision(ctx, occ, start, end, eid, True)
+            reason = _window_reason(start, end) or _slot_reason(ctx, ev, occ, start, end, eid)
             if reason:
                 raise PlanError(400, f"can't retime {ev.get('title') or eid!r} on {occ}: {reason}")
             overrides = dict(ev.get("overrides") or {})
@@ -441,11 +487,20 @@ def h_event_move(ctx: Ctx, body: dict):
             if k in ev:
                 new[k] = ev[k]
         new["from_series"] = eid
+        was_done = occ in [str(d) for d in (ev.get("done_on") or [])]
+        if was_done:
+            new["done"] = True
         _event_guard(ctx, new, None, "move")
         skips = [str(s) for s in (ev.get("skips") or [])]
         if occ not in skips:
             skips.append(occ)
         ev["skips"] = skips
+        if was_done:
+            rest = [d for d in (ev.get("done_on") or []) if str(d) != occ]
+            if rest:
+                ev["done_on"] = rest
+            else:
+                ev.pop("done_on", None)
         overrides = dict(ev.get("overrides") or {})
         if overrides.pop(occ, None) is not None:
             if overrides:
@@ -489,6 +544,39 @@ def h_event_skip(ctx: Ctx, body: dict):
             ev["overrides"] = overrides
         else:
             ev.pop("overrides", None)
+    events[idx] = ev
+    ctx.touched[f"evt:{eid}"] = ev
+    return ev
+
+
+def h_event_done(ctx: Ctx, body: dict):
+    """Manual, optional done mark; changes no time, so no collision/window guards. Idempotent."""
+    events, idx, eid = _event_or_404(ctx, body)
+    ev = dict(events[idx])
+    flag = body.get("done")
+    if not isinstance(flag, bool):
+        raise PlanError(400, "done must be true or false")
+    if _is_recurring(ev):
+        if not body.get("occurrence"):
+            raise PlanError(400, "occurrence required to mark one occurrence of a recurring event")
+        occ = _day(body["occurrence"], "occurrence")
+        day0 = schedmath._parse_day(ev.get("day"))
+        skips = [str(x) for x in (ev.get("skips") or [])]
+        cur = schedmath._parse_day(occ)
+        if day0 is None or cur is None or cur < day0 or occ in skips or not (
+                cur == day0 or schedmath._occurs_on(day0, ev["recur"], cur)):
+            raise PlanError(400, f"{occ} is not an occurrence of {eid!r}")
+        done_on = sorted({str(d) for d in (ev.get("done_on") or [])} | ({occ} if flag else set()))
+        if not flag:
+            done_on = [d for d in done_on if d != occ]
+        if done_on:
+            ev["done_on"] = done_on
+        else:
+            ev.pop("done_on", None)
+    elif flag:
+        ev["done"] = True
+    else:
+        ev.pop("done", None)
     events[idx] = ev
     ctx.touched[f"evt:{eid}"] = ev
     return ev
@@ -853,6 +941,7 @@ _ROUTES = {
     "/api/v2/plan/event/delete": ("sched", h_event_delete, False),
     "/api/v2/plan/event/move": ("sched", h_event_move, False),
     "/api/v2/plan/event/skip": ("sched", h_event_skip, False),
+    "/api/v2/plan/event/done": ("sched", h_event_done, False),
     "/api/v2/plan/placement/move": ("sched", h_placement_move, False),
     "/api/v2/plan/placement/delete": ("sched", h_placement_delete, False),
     "/api/v2/plan/placement/add": ("sched", h_placement_add, False),

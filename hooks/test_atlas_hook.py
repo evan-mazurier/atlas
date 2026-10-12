@@ -29,6 +29,7 @@ class Env:
         cfg["workflows_file"] = str(REPO / "workflows.yaml")
         cfg["areas_file"] = str(REPO / "areas.yaml")
         cfg["exempt_temp"] = False
+        cfg["plan_url"] = ""             # automatic Plan link off: the suite never reaches a live cockpit
         self.cfg = cfg
         self.set_mode("record")
         self.n = 0
@@ -40,11 +41,14 @@ class Env:
     def env(self):
         e = dict(os.environ, ATLAS_HOOKS_DIR=str(self.hooks), ATLAS_LEDGER2_DIR=str(self.ledger))
         e["CLAUDE_CODE_ENTRYPOINT"] = "cli"
+        e["ATLAS_PLAN_URL"] = ""
         return e
 
     def run_raw(self, text, extra_env=None):
         e = self.env()
         e.update(extra_env or {})
+        for k in [k for k, v in e.items() if v is None]:      # a None value removes the variable
+            del e[k]
         r = subprocess.run([sys.executable, str(self.hooks / "atlas_hook.py")], input=text,
                            capture_output=True, text=True, timeout=30, env=e)
         return r
@@ -856,12 +860,12 @@ def test_session_end_survives_cost_failure(env, tmp_path):
 
 
 def test_work_type_plan_ref(env):
-    env.bash(": team-type writing md task:evt_0a1b2c3d")
+    env.bash(": team-type writing job task:evt_0a1b2c3d")
     wt = env.events("work_type")[-1]
-    assert wt["type"] == "writing" and wt["area"] == "md" and wt["plan_ref"] == "evt_0a1b2c3d"
+    assert wt["type"] == "writing" and wt["area"] == "job" and wt["plan_ref"] == "evt_0a1b2c3d"
     env.bash(": team-type coding task:evt_0a1b2c3d@2026-10-12")      # task without area, series occurrence
     wt = env.events("work_type")[-1]
-    assert wt["type"] == "coding" and wt["plan_ref"] == "evt_0a1b2c3d@2026-10-12" and wt["area"] != "md"
+    assert wt["type"] == "coding" and wt["plan_ref"] == "evt_0a1b2c3d@2026-10-12" and wt["area"] != "job"
     env.bash(": team-type coding task:t_deadbeef")                    # same type, new ref: reopens
     assert env.events("work_type")[-1]["plan_ref"] == "t_deadbeef"
     env.bash(": team-type coding task:atlas/some-slug")
@@ -872,7 +876,7 @@ def test_work_type_plan_ref(env):
 
 
 def test_work_type_bad_plan_ref_is_ignored_type_still_declared(env):
-    env.bash(": team-type research atlas task:write the onboarding email")
+    env.bash(": team-type research atlas task:open the weekly report")
     assert not env.events("work_type")                               # free text: arguments rejected
     env.bash(": team-type research atlas task:bad!id")
     wt = env.events("work_type")[-1]

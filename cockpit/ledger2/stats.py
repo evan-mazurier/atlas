@@ -71,7 +71,7 @@ def _refusals(ts):
     enforced = would = 0
     for t in ts:
         for r in t.get("refusals") or []:
-            if r.get("guard") != "rework":
+            if r.get("guard") != "rework" or r.get("notice"):
                 continue
             if r.get("would"):
                 would += 1
@@ -240,7 +240,7 @@ def compute(week: str | None = None) -> dict:
     for d, t in closed:
         if not (mon - dt.timedelta(weeks=3) <= d <= wk_end):
             continue
-        if any(r.get("guard") == "rework" for r in t.get("refusals") or []):
+        if any(r.get("guard") == "rework" and not r.get("notice") for r in t.get("refusals") or []):
             hist["refused"] += 1
         else:
             hist[str(min(2, (t.get("rounds") or {}).get("needs_changes", 0)))] += 1

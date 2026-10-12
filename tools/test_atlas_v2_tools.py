@@ -201,6 +201,14 @@ def test_install_replaces_stale_atlas_entry_in_place(home):
     assert "async" not in json.dumps([g for g in stop if "atlas_hook.py" in json.dumps(g)])
 
 
+def test_build_config_keeps_plan_url_off_and_defaults_when_absent():
+    repo = Path(__file__).resolve().parent.parent
+    default = json.loads((repo / "hooks" / "atlas_config.json").read_text(encoding="utf-8"))["plan_url"]
+    assert install_hooks.build_config(repo, {"plan_url": "off"})["plan_url"] == "off"
+    assert install_hooks.build_config(repo, {"mode": "record"})["plan_url"] == default
+    assert install_hooks.build_config(repo, None)["plan_url"] == default
+
+
 def test_merge_settings_is_pure():
     before = copy.deepcopy(REAL_SHAPED_SETTINGS)
     out = install_hooks.merge_settings(before, PY, "C:/x/atlas/atlas_hook.py")

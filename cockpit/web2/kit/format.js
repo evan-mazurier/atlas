@@ -157,3 +157,9 @@ export function duration(s) {
   const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
   return h ? h + " h" + (m ? " " + m + " min" : "") : m + " min";
 }
+
+/** Colour token for an area id; an id with no --a-<id> token (a removed area, null) gets the neutral Unassigned colour, like app.js areaColor. */
+export function areaVar(id, isKnown) {
+  const known = isKnown || ((x) => typeof document !== "undefined" && !!document.documentElement.style.getPropertyValue("--a-" + x));
+  return id && known(id) ? "var(--a-" + id + ")" : "var(--ctx-2)";
+}

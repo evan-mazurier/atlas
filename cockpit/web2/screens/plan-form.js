@@ -50,7 +50,7 @@ function nextQuarter() {
   return clamp(snap(d.getHours() * 60 + d.getMinutes() + 7), EDIT_MIN, EDIT_MAX - 60);
 }
 
-/** o = {mode: 'new', day, start?, end?} | {mode: 'edit', ev} | {mode: 'review', item, day?} */
+/** o = {mode: 'edit', ev} | {mode: 'review', item, day?}  (events are created from a session, not on the screen) */
 export function openEventForm(P, o) {
   const { S, ctx } = P;
   const ui = ctx.ui;
@@ -97,7 +97,7 @@ export function openEventForm(P, o) {
   root.setAttribute("aria-modal", "true");
   root.tabIndex = -1;
   const head = mk("div", "plan-form-h", null, root);
-  mk("b", null, item ? "Schedule review" : ev ? "Edit event" : "New event", head);
+  mk("b", null, item ? "Schedule review" : "Edit event", head);
   const x = mk("button", "plan-link", "Close", head);
   x.type = "button";
   x.addEventListener("click", () => closeForm(P));
@@ -179,6 +179,10 @@ export function openEventForm(P, o) {
   ui.button(foot, { label: "Cancel", onClick: () => closeForm(P) });
   let del = null;
   if (ev) {
+    ui.button(foot, {
+      label: ev.done ? "Undo done" : "Mark done",
+      onClick: () => { closeForm(P); P.act.markDone(ev, !ev.done); },
+    });
     del = ui.button(foot, {
       label: "Delete",
       onClick: () => {
@@ -257,8 +261,7 @@ export function openEventForm(P, o) {
       }
     }
     closeForm(P);
-    if (o.mode === "new") P.act.createEvent(vals);
-    else if (occ) {
+    if (occ) {
       if (vals.start == null) {
         if (day !== ev.day) P.act.moveEvent(ev, { day, start: null, end: null });
       } else P.act.moveEvent(ev, { day, start: fromMin(f.start), end: fromMin(f.end) });

@@ -638,3 +638,76 @@ def test_derive_v1_job_without_a_finish_is_ended_at_its_last_event():
     t = derive.derive_v1(v1, areas.load_areas(str(AREAS_FIXTURE)), wf())[0]
     assert t["status"] == "ended" and t["ended"] == "2026-09-01T10:10:00" and t["duration_s"] == 600
     assert t["rounds"]["own"] == 0 and t["rounds"]["carried"] == 0
+
+
+# ------------------------------------------------------------------ active time and rework notices
+
+def _one(evs):
+    return derive.derive_v2(evs, wf())[0]
+
+
+def test_active_time_overnight_gap_not_counted():
+    t = _one([E("work_type", 0, type="coding", task="abcd1234-1"),
+              E("cost", 5, task="abcd1234-1"),
+              E("cost", 13 * 60, task="abcd1234-1"),
+              E("cost", 13 * 60 + 10, task="abcd1234-1"),
+              E("task_done", 13 * 60 + 12, task="abcd1234-1")])
+    assert t["duration_s"] == (5 + 10 + 2) * 60
+    assert t["span_s"] == (13 * 60 + 12) * 60
+
+
+def test_active_time_gap_up_to_15_min_counted_and_over_not():
+    t = _one([E("work_type", 0, type="coding", task="abcd1234-1"),
+              E("cost", 15, task="abcd1234-1"),
+              E("cost", 31, task="abcd1234-1"),
+              E("task_done", 31, task="abcd1234-1")])
+    assert t["duration_s"] == 15 * 60
+
+
+def test_active_time_helper_run_without_events_counts_fully():
+    t = _one([E("work_type", 0, type="coding", task="abcd1234-1"),
+              E("helper_start", 1, task="abcd1234-1", tuid="t1", helper="implementer", label="x"),
+              E("helper_paired", 1, agent_id="I1", helper="implementer", tuid="t1"),
+              E("helper_end", 41, task="abcd1234-1", agent_id="I1", helper="implementer"),
+              E("task_done", 42, task="abcd1234-1")])
+    assert t["duration_s"] == 42 * 60
+
+
+def test_active_time_overlapping_helpers_not_double_counted():
+    t = _one([E("work_type", 0, type="coding", task="abcd1234-1"),
+              E("helper_start", 1, task="abcd1234-1", tuid="t1", helper="implementer", label="a"),
+              E("helper_paired", 1, agent_id="I1", helper="implementer", tuid="t1"),
+              E("helper_start", 2, task="abcd1234-1", tuid="t2", helper="scout", label="b"),
+              E("helper_paired", 2, agent_id="S1", helper="scout", tuid="t2"),
+              E("helper_end", 30, task="abcd1234-1", agent_id="S1", helper="scout"),
+              E("helper_end", 40, task="abcd1234-1", agent_id="I1", helper="implementer"),
+              E("task_done", 40, task="abcd1234-1")])
+    assert t["duration_s"] == 40 * 60
+
+
+def test_active_time_open_task_uses_last_event():
+    t = _one([E("work_type", 0, type="coding", task="abcd1234-1"),
+              E("cost", 10, task="abcd1234-1"),
+              E("cost", 600, task="abcd1234-1", sid="other")])
+    assert t["status"] == "open" and t["duration_s"] == 10 * 60 and t["span_s"] == 10 * 60
+
+
+def test_carry_over_notice_excluded_from_rework_refused():
+    notice = {"guard": "rework", "would": True, "notice": True}
+    real = {"guard": "rework", "would": False}
+    tasks = [{"refusals": [notice, real, {"guard": "rework", "would": True}]}]
+    assert stats._refusals(tasks) == (1, 1)
+    t = _one([E("work_type", 0, type="coding", task="abcd1234-1"),
+              E("refusal", 1, task="abcd1234-1", guard="rework", would=True, detail="carry-over, not a denial: x"),
+              E("refusal", 2, task="abcd1234-1", guard="rework", would=False, detail="over budget")])
+    assert len(t["refusals"]) == 2 and stats._refusals([t]) == (1, 0)
+
+
+def test_rounds_hist_refused_bucket_ignores_carry_over_notice(ledger):
+    s = now_stream()
+    for e in s:
+        if e["ev"] == "refusal":
+            e["detail"] = "carry-over, not a denial: x"
+    seed(ledger, s)
+    h = stats.compute()["rounds_hist"]
+    assert h["refused"] == 0 and h["0"] == 1

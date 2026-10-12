@@ -423,7 +423,7 @@ def fresh_state(sid):
             "version": 0, "last_verified": 0, "other_v": 0, "edits": 0, "nc_versions": [], "carried_nc": 0,
             "needs_changes": 0, "tuid_aid": {}, "budget": None, "escalated": False, "granted": 0, "pending": {},
             "agents": {}, "captured": [], "ended_ids": [], "sent_back_for": None, "playbook_last": None,
-            "task_t": None, "spawns": 0, "reminded": None, "plan_ref": None, "last_verdict": None,
+            "task_t": None, "spawns": 0, "reminded": None, "plan_ref": None, "plan_auto": False, "last_verdict": None,
             "last_verdict_seq": None, "nc_at": 0, "spawn_seq": 0, "pub_n": 0, "pub_exp": None}
 
 
@@ -510,7 +510,7 @@ def apply_event(S, e, wf):
             S["n"] = S.get("n", 0) + 1
         S.update(type=typ, area=e.get("area"), open=True, version=0, last_verified=0, other_v=0, edits=0,
                  sent_back_for=None, needs_check=info["needs_check"], task_t=e.get("t"), spawns=0, reminded=None,
-                 plan_ref=e.get("plan_ref"), last_verdict=None, last_verdict_seq=None)
+                 plan_ref=e.get("plan_ref"), plan_auto=bool(e.get("plan_auto")), last_verdict=None, last_verdict_seq=None)
         if e.get("carried"):
             S["carried_nc"] = nc_count(S)
             S["nc_versions"] = []
@@ -708,7 +708,7 @@ def split_plan_ref(rest):
     if words and words[-1][:5].lower() == "task:":
         cand = words.pop()[5:]
         rest = " ".join(words)
-        if PLAN_REF_RE.match(cand):
+        if PLAN_REF_RE.fullmatch(cand):
             return rest, cand, None
         return rest, None, "team-type: bad plan ref"
     return rest, None, None
@@ -716,7 +716,93 @@ def split_plan_ref(rest):
 
 # ------------------------------------------------------------------ task opening
 
-def open_task(H, tx, kind, typ, area_arg=None, cmd=None, implicit=False, plan_ref=None):
+AUTO_LINK_LEAD_MIN = 15
+AUTO_LINK_TIMEOUT_S = 0.5
+DEFAULT_PLAN_URL = "http://127.0.0.1:8765"
+
+
+def _plan_base(H):
+    """The Plan server's base URL, or None when the feature is off (empty / null / "off", in the env or the config)."""
+    if "ATLAS_PLAN_URL" in os.environ:
+        v = os.environ["ATLAS_PLAN_URL"]
+    elif "plan_url" in H.cfg:
+        v = H.cfg["plan_url"]
+    else:
+        v = DEFAULT_PLAN_URL
+    if not isinstance(v, str) or v.strip().lower() in ("", "off"):
+        return None
+    return v.strip().rstrip("/")
+
+
+def _fetch_plan_events(H, day):
+    """The live Plan's events for `day` (GET /api/v2/plan), or None on any failure or when off. Stdlib, 0.5 s per socket
+    operation, loopback only, no proxy, no redirects, silent."""
+    base = _plan_base(H)
+    if base is None:
+        return None
+    import urllib.parse  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    u = urllib.parse.urlsplit(base)
+    if u.scheme not in ("http", "https") or (u.hostname or "").lower() not in ("127.0.0.1", "::1", "localhost"):
+        return None
+    url = "%s/api/v2/plan?from=%s&to=%s" % (base, day, day)
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None                       # a 30x is an HTTPError = no link; never follow it to another host
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    with opener.open(url, timeout=AUTO_LINK_TIMEOUT_S) as r:
+        body = r.read(2000000)
+    data = json.loads(body.decode("utf-8"))
+    evs = data.get("events") if isinstance(data, dict) else None
+    return evs if isinstance(evs, list) else None
+
+
+def _hhmm(v):
+    m = re.match(r"^(\d{1,2}):(\d\d)$", str(v or ""))
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        return None
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+
+def auto_plan_ref(H, area):
+    """The Plan ref for a task about to open WITHOUT an explicit one (contracts §1.2), or None.
+    Exactly one timed, not-done event of the same area that runs now or starts within 15 minutes. Never raises.
+    Called BEFORE the ledger transaction: it does an HTTP read."""
+    try:
+        if not area:
+            return None
+        now = dt.datetime.now()
+        day = now.date().isoformat()
+        evs = _fetch_plan_events(H, day)
+        if not evs:
+            return None
+        nm = now.hour * 60 + now.minute + now.second / 60.0
+        found = []
+        for ev in evs:
+            if not isinstance(ev, dict) or ev.get("area") != area or ev.get("done") or ev.get("day") != day:
+                continue
+            a, b = _hhmm(ev.get("start")), _hhmm(ev.get("end"))
+            if a is None or b is None or not (a - AUTO_LINK_LEAD_MIN <= nm < b):
+                continue
+            ref = ev.get("id")
+            if not isinstance(ref, str):
+                continue
+            if ev.get("recur"):
+                occ = ev.get("occurrence")
+                if not isinstance(occ, str):
+                    continue
+                ref += "@" + occ
+            found.append(ref)
+        if len(found) == 1 and PLAN_REF_RE.fullmatch(found[0]) and found[0].startswith("evt_"):
+            return found[0]
+    except BaseException as ex:  # noqa: BLE001 - never block or fail a session because of this
+        if isinstance(ex, (KeyboardInterrupt, SystemExit)):
+            raise
+    return None
+
+
+def open_task(H, tx, kind, typ, area_arg=None, cmd=None, implicit=False, plan_ref=None, auto_ref=None):
     S = tx.state
     carried = False
     if S["open"]:
@@ -733,6 +819,9 @@ def open_task(H, tx, kind, typ, area_arg=None, cmd=None, implicit=False, plan_re
         e["type"] = typ
     if plan_ref:
         e["plan_ref"] = plan_ref
+    elif auto_ref and not implicit:
+        e["plan_ref"] = auto_ref
+        e["plan_auto"] = True
     if carried:
         e["carried"] = True
     if implicit:
@@ -754,7 +843,7 @@ def _just_opened(S, seconds=60):
         return False
 
 
-def open_playbook(H, tx, cmd):
+def open_playbook(H, tx, cmd, auto_ref=None):
     S = tx.state
     last = S.get("playbook_last")
     if last and last.get("cmd") == cmd and S.get("open"):
@@ -764,7 +853,7 @@ def open_playbook(H, tx, cmd):
                 return
         except Exception:  # noqa: BLE001
             pass
-    open_task(H, tx, "playbook", "playbook", cmd=cmd)
+    open_task(H, tx, "playbook", "playbook", cmd=cmd, auto_ref=auto_ref)
 
 
 # ------------------------------------------------------------------ handlers
@@ -860,8 +949,9 @@ def h_prompt_expansion(H):
     cmd = cmd.split(":")[-1]
     if cmd == "grant-rework" or cmd not in H.playbook_names():
         return None
+    auto_ref = None if H.agent_id else auto_plan_ref(H, H.area_for(None, cmd))      # HTTP read, before the lock
     with Txn(H) as tx:
-        open_playbook(H, tx, cmd)
+        open_playbook(H, tx, cmd, auto_ref)
     return None
 
 
@@ -2032,6 +2122,15 @@ def h_pre_bash(H):
         return deny("Only the operator can grant rework rounds, by typing /grant-rework. "
                     "This command was refused.")
     kind, rest = team.group(1).lower(), team.group(2)
+    auto_ref = None
+    if kind == "type" and not H.agent_id:       # HTTP read, before the lock, only when a bare declaration may open
+        try:
+            r0, ref0, problem0 = split_plan_ref(rest)
+            m0 = TYPE_RE.match(r0)
+            if m0 and ref0 is None and problem0 is None:      # a malformed task: token is an explicit attempt
+                auto_ref = auto_plan_ref(H, H.area_for((m0.group(2) or "").lower() or None, None))
+        except Exception:  # noqa: BLE001
+            auto_ref = None
     with Txn(H) as tx:
         if H.agent_id:
             tx.emit({"ev": "ignored", "what": "team-" + kind + " from a helper"})
@@ -2049,10 +2148,11 @@ def h_pre_bash(H):
                 return None
             typ = H.norm_type(m.group(1))
             if (S["open"] and S["type"] == typ and _just_opened(S)
-                    and (plan_ref is None or plan_ref == S.get("plan_ref"))):
+                    and (plan_ref is None or (plan_ref == S.get("plan_ref") and not S.get("plan_auto")))):
                 tx.emit({"ev": "ignored", "what": "team-type: duplicate within 60 s, no-op"})
                 return None
-            open_task(H, tx, "work_type", typ, area_arg=(m.group(2) or "").lower() or None, plan_ref=plan_ref)
+            open_task(H, tx, "work_type", typ, area_arg=(m.group(2) or "").lower() or None, plan_ref=plan_ref,
+                      auto_ref=auto_ref)
         elif kind == "summary":
             raw = rest.strip()
             if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
@@ -2164,8 +2264,9 @@ def h_pre_skill(H):
             tx.emit({"ev": "ignored", "what": "model invoked allow-publish skill"})
         return deny("allow-publish is user-only: only the operator can allow a publish, by typing /allow-publish.")
     if name and name in H.playbook_names():
+        auto_ref = None if H.agent_id else auto_plan_ref(H, H.area_for(None, name))   # HTTP read, before the lock
         with Txn(H) as tx:
-            open_playbook(H, tx, name)
+            open_playbook(H, tx, name, auto_ref)
     return None
 
 

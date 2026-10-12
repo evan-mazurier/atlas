@@ -24,7 +24,7 @@ def brief(tmp_path, text="Build the Product page.\nPark it on branch atlas/m2.\n
 
 
 def go(tmp_path, **kw):
-    a = dict(area="md", typ="coding", model="claude-sonnet-5-5", title="Product page", review_min=20)
+    a = dict(area="job", typ="coding", model="claude-sonnet-5-5", title="Product page", review_min=20)
     a.update(kw)
     if "brief_path" not in a:
         a["brief_path"] = brief(tmp_path)
@@ -34,7 +34,7 @@ def go(tmp_path, **kw):
 def test_output_shape_and_marker_file(tmp_path):
     out = go(tmp_path)
     assert set(out) == {"marker", "area", "group", "model", "title", "prompt"}
-    assert out["group"] == "Product" and out["model"] == "claude-sonnet-5-5"
+    assert out["group"] == "Research" and out["model"] == "claude-sonnet-5-5"
     f = tmp_path / "ledger" / "auto" / f"{out['marker']}.json"
     rec = json.loads(f.read_text(encoding="utf-8"))
     assert set(rec) == {"marker", "area", "type", "model", "title", "brief_sha", "started"}
@@ -45,7 +45,7 @@ def test_prompt_shape(tmp_path):
     out = go(tmp_path)
     lines = out["prompt"].splitlines()
     assert lines[0] == f"Run this first, on its own: : team-auto {out['marker']}"
-    assert lines[1] == "Then run this, on its own: : team-type coding md"
+    assert lines[1] == "Then run this, on its own: : team-type coding job"
     p = out["prompt"]
     assert "Build the Product page." in p
     for word in ("publish", "send", "pay", "sign", "merge to main", "push", "contact"):
@@ -126,7 +126,7 @@ def test_record_session(tmp_path):
     f = tmp_path / "ledger" / "auto" / f"{out['marker']}.json"
     assert ls.main(["--record-session", out["marker"], "sess-123"]) == 0
     rec = json.loads(f.read_text(encoding="utf-8"))
-    assert rec["session_id"] == "sess-123" and rec["area"] == "md" and rec["marker"] == out["marker"]
+    assert rec["session_id"] == "sess-123" and rec["area"] == "job" and rec["marker"] == out["marker"]
     assert not list(f.parent.glob("*.tmp"))
     assert ls.main(["--record-session", "nope-1", "x"]) == 2
     assert ls.main(["--record-session", "../evil", "x"]) == 2

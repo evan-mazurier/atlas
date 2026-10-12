@@ -84,6 +84,15 @@ def test_flow_mapping_closed_by_bracket_raises():
         la.mini_yaml("k: [x, {y: 1]")
 
 
+def test_attention_done_session_is_not_waiting(monkeypatch):
+    snap = dict(SNAP, sessions=[{"sid": "d", "title": None, "project": "product", "type": "Research", "status": "idle",
+                                 "waiting": False, "done": True, "cwd": "D:\\AI\\product\\missions"}])
+    monkeypatch.setattr(shell_api, "_snapshot", lambda: snap)
+    monkeypatch.setattr(shell_api, "_pending_reviews", lambda: 0)
+    code, d = shell_api.get("/api/v2/attention", {})
+    assert d["waiting"] == 0 and d["sessions"][0]["status"] == "idle"
+
+
 def test_attention_payload(monkeypatch):
     monkeypatch.setattr(shell_api, "_snapshot", lambda: SNAP)
     monkeypatch.setattr(shell_api, "_pending_reviews", lambda: 2)
@@ -182,17 +191,17 @@ def test_area_order_is_explicit_then_playbook_then_folder():
     areas = shell_api.load_areas()
     cwd = "D:/AI/Atlas"
     assert shell_api.area_of(areas, cwd, None, None) == "atlas"
-    assert shell_api.area_of(areas, cwd, None, "start-of-day") == "md"
+    assert shell_api.area_of(areas, cwd, None, "daily-review") == "job"
     assert shell_api.area_of(areas, cwd, None, "/daily-review") == "job"
     assert shell_api.area_of(areas, cwd, "train", "daily-review") == "train"
     assert shell_api.area_of(areas, cwd, "nope", None) == "atlas"       # unknown explicit area is ignored
 
 
 def test_sessions_use_their_playbook_and_explicit_area(monkeypatch):
-    snap = dict(SNAP, sessions=[dict(SNAP["sessions"][0], cwd="D:/AI/Atlas", playbook="start-of-day", area_arg=None),
+    snap = dict(SNAP, sessions=[dict(SNAP["sessions"][0], cwd="D:/AI/Atlas", playbook="daily-review", area_arg=None),
                                 dict(SNAP["sessions"][0], sid="z", cwd="D:/AI/Atlas", playbook=None, area_arg="job")])
     monkeypatch.setattr(shell_api, "_snapshot", lambda: snap)
-    assert [s["area"] for s in shell_api.get("/api/v2/team", {})[1]["sessions"]] == ["md", "job"]
+    assert [s["area"] for s in shell_api.get("/api/v2/team", {})[1]["sessions"]] == ["job", "job"]
 
 
 def test_review_tray_failure_is_logged_once(monkeypatch, capsys):

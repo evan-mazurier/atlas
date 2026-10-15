@@ -476,7 +476,8 @@ def test_fetch_runs_in_the_background_and_is_cached(env, monkeypatch):
     anchor.ensure_fresh()                                         # inside the TTL: no new fetch
     time.sleep(0.1)
     assert len(calls) == 1
-    anchor.ensure_fresh(NOW + dt.timedelta(days=1) + dt.timedelta(hours=40))   # past the TTL: one more
+    # past the TTL: one more. Measured from the real clock, like checked_at above (a fixed date stops working once it is past)
+    anchor.ensure_fresh(dt.datetime.now().astimezone() + dt.timedelta(seconds=anchor.TTL_SECONDS + 60))
     for _ in range(100):
         if len(calls) == 2:
             break

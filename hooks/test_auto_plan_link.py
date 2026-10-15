@@ -21,6 +21,7 @@ class PlanServer:
         self.raw = None
         self.delay = 0
         self.redirect_to = None
+        self.redirect_code = 302
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -31,7 +32,7 @@ class PlanServer:
                 outer.hits += 1
                 outer.lock_free.append(outer.probe_lock())
                 if outer.redirect_to:
-                    self.send_response(302)
+                    self.send_response(outer.redirect_code)
                     self.send_header("Location", outer.redirect_to)
                     self.send_header("Content-Length", "0")
                     self.end_headers()
@@ -177,11 +178,13 @@ def test_non_string_id_ignored(env, plan):
     assert "plan_ref" not in declare(env)
 
 
-def test_redirect_is_not_followed(env, plan):
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_redirect_is_not_followed(env, plan, code):
     other = PlanServer()
     other.ledger = env.ledger
     try:
         other.events = [ev("job", -10, 50)]
+        plan.redirect_code = code
         plan.redirect_to = other.url + "/api/v2/plan"
         w = declare(env)
         assert w["type"] == "research" and "plan_ref" not in w

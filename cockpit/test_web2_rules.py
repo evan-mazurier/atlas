@@ -113,8 +113,9 @@ def test_top_bar_has_no_usage_window_meter():
     base = (WEB2 / "base.css").read_text(encoding="utf-8")
     for gone in ("ab-segm", "ab-win", "Window", 'class="um"'):
         assert gone not in index, gone
-    for kept in ("ab-working-t", "ab-waiting-t", "ab-review-t"):          # the other chips stay
+    for kept in ("ab-working-t", "ab-waiting-t"):          # the other chips stay
         assert kept in index and kept in app
+    assert "ab-review" not in index and "ab-review" not in app          # the pending-review chip is gone (2026-10-15)
     assert "a.window" not in app and "segMeter" not in app
     assert not re.search(r"\.segm[ {,]", base) and ".um{" not in base
     assert "segMeter" not in (WEB2 / "kit" / "charts.js").read_text(encoding="utf-8")

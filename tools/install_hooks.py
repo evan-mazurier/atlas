@@ -1,14 +1,14 @@
 """Install the Atlas v2 hooks (docs/v2/contracts.md §6).
 
 Copies hooks/atlas_hook.py + cockpit/ledger2/areas.py + ledger_chain.py + atlas_config.json (+ JSON copies of
-workflows.yaml / areas.yaml) into the hooks folder, installs the grant-rework, ack-break and allow-publish skills, widens
+workflows.yaml / areas.yaml) into the hooks folder, installs the grant-rework, ack-break, allow-publish and allow-config skills, widens
 team_events.py's type regex, and MERGES the v2 entries into settings.json (timestamped backup first,
 idempotent). Every registered event is dry-run with a sample payload first; settings.json is only
 written when every run exits 0 with an empty stdout.
 
 Targets (overridable for tests): ATLAS_HOOKS_DIR (default ~/.claude/hooks/atlas), ATLAS_SETTINGS_FILE
 (default ~/.claude/settings.json), ATLAS_SKILLS_DIR (default ~/.claude/skills).
-NEVER run this against the live home except at the Chief's Join 1.
+NEVER run this against the live home except at the orchestrator's Join 1.
 
     py -3.12 tools/install_hooks.py [--dry-run] [--python PATH] [--repo DIR] [--no-team-events]
 """
@@ -31,13 +31,14 @@ sys.path.insert(0, str(REPO / "cockpit"))
 from ledger2 import areas as areas_mod  # noqa: E402
 from ledger2 import store  # noqa: E402
 
-PRE_MATCHER = "Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage"
+PRE_MATCHER = ("Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage|"
+               "mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__update_scheduled_task|RemoteTrigger")
 POST_MATCHER = "Agent|Edit|Write|NotebookEdit"
 EVENTS = [("PreToolUse", PRE_MATCHER), ("PostToolUse", POST_MATCHER), ("SubagentStart", None),
           ("SubagentStop", None), ("Stop", None), ("SessionStart", None), ("SessionEnd", None),
           ("UserPromptSubmit", None), ("UserPromptExpansion", None)]
 HOOK_NAME = "atlas_hook.py"
-SKILLS = ("grant-rework", "ack-break", "allow-publish")
+SKILLS = ("grant-rework", "ack-break", "allow-publish", "allow-config")
 
 
 def targets() -> dict:
@@ -81,7 +82,7 @@ def preflight(repo: Path) -> list[str]:
         except Exception as e:  # noqa: BLE001
             bad.append(f"{name}: {type(e).__name__}")
     for rel in ("hooks/atlas_hook.py", "hooks/atlas_config.json", "cockpit/ledger2/areas.py",
-                "hooks/skills/grant-rework/SKILL.md", "hooks/skills/ack-break/SKILL.md", "hooks/skills/allow-publish/SKILL.md",
+                "hooks/skills/grant-rework/SKILL.md", "hooks/skills/ack-break/SKILL.md", "hooks/skills/allow-publish/SKILL.md", "hooks/skills/allow-config/SKILL.md",
                 "cockpit/ledger2/ledger_chain.py",
                 "hooks/team_events.py"):
         if not (repo / rel).is_file():

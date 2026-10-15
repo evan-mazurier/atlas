@@ -35,8 +35,13 @@ export function roundsParts(r) {
 
 /** The Verdict column: [glyph, tone, label]. A refusal shows only when refusals exist and the task is not READY. */
 export function verdictParts(t) {
-  const refused = (t.refusals || []).some((x) => x.would === false);
-  if (refused && t.final_verdict !== "READY") return ["×", "crit", "Refused, over budget"];
+  const real = (t.refusals || []).filter((x) => x.would === false && !x.notice);
+  const refused = real.find((x) => x.guard === "rework") || real[0];
+  const why = { rework: "over budget", publish: "publish not allowed", config: "config change not allowed" };
+  if (refused && t.final_verdict !== "READY") {
+    const normalFlow = refused.guard === "config" || refused.guard === "publish";    // normal flow: ask the operator
+    return ["×", normalFlow ? "warn" : "crit", "Refused, " + (why[refused.guard] || refused.guard || "guard")];
+  }
   if (t.unverified_flag) return ["!", "warn", "Unverified, no passing review"];
   if (t.final_verdict === "READY") return ["✓", "ok", "READY" + (t.status === "done" ? " · closed" : "")];
   if (t.final_verdict === "NEEDS_CHANGES") {

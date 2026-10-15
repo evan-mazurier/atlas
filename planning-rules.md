@@ -1,6 +1,6 @@
 # Planning rules
 
-How the week is planned. Read by whoever plans the week (the weekly planning session, the Chief).
+How the week is planned. Read by whoever plans the week (the weekly planning session, the orchestrator).
 Change a rule by editing its line. This file is an EXAMPLE: replace every rule with your own.
 
 ## Every day (recurring, no end)
@@ -22,7 +22,7 @@ Change a rule by editing its line. This file is an EXAMPLE: replace every rule w
 - Learning is optional time: a skipped session needs no catch-up and no warning.
 
 ## Agents' work
-- The operator's time holds anything that needs a person: working with the Chief, deciding, approving, sending, logins, payments.
+- The operator's time holds anything that needs a person: working with the orchestrator, deciding, approving, sending, logins, payments.
 - The agents' lane holds only work that runs without the operator (an automatic session via /launch-auto). It starts when the operator says so; nothing starts on its own.
 - Every agents' task gets a review slot in the operator's time after it, on the same topic.
 

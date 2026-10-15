@@ -1,7 +1,7 @@
 """Atlas v2 hook: ONE script for every Claude Code hook event (docs/v2/contracts.md §6).
 
-Logger + verdict capture + guards (rework budget, done-lock, quick-question lock, publish gate) + grant-rework +
-allow-publish + cost capture + areas/look check. Registered SYNC so a guard can deny. Reads `atlas_config.json` next to
+Logger + verdict capture + guards (rework budget, done-lock, quick-question lock, publish gate, config gate) + grant-rework +
+allow-publish + allow-config + cost capture + areas/look check. Registered SYNC so a guard can deny. Reads `atlas_config.json` next to
 itself (override the directory with ATLAS_HOOKS_DIR), never imports the Atlas repo.
 
 Fail open, always: any problem ends in os._exit(0) with an empty stdout. Stdout carries only the
@@ -10,9 +10,11 @@ Metadata only: never prompt text, never tool input/output text beyond the fields
 """
 import datetime as dt
 from collections import Counter
+import fnmatch
 import hashlib
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -71,9 +73,113 @@ def norm_path(p):
     return os.path.normcase(os.path.abspath(str(p)))
 
 
+SCRATCH_NEVER = {"claude.md", "claude.local.md", "agent.md", "agents.md", "skill.md", "gemini.md",
+                 "cmakelists.txt", "requirements.txt"}
+
+
+def path_forms(p):
+    """Two forms of a path: the absolute one (`norm_path`) and the real one (junctions and symlinks resolved, same
+    case folding). The second falls back to the first when the path cannot be resolved. Safe checks look at BOTH."""
+    a = norm_path(p)
+    forms = [a]
+    try:
+        r = os.path.normcase(os.path.realpath(str(p)))
+        if r and r != a:
+            forms.append(r)
+    except Exception:  # noqa: BLE001
+        pass
+    return forms
+
+
+def has_stream(form):
+    """An NTFS alternate data stream: a colon in the part after the drive (`CLAUDE.md:x`, `file::$DATA`)."""
+    return ":" in os.path.splitdrive(form)[1]
+
+
+def strip_stream(form):
+    """The path without a stream suffix: everything from the first colon after the drive removed in the LAST component
+    (and the trailing dots and spaces Windows ignores). Without a colon the path comes back as it is."""
+    drive, rest = os.path.splitdrive(form)
+    if ":" not in rest:
+        return [form]
+    i = max(rest.rfind("\\"), rest.rfind("/"))
+    last = rest[i + 1:].split(":", 1)[0].rstrip(" .")
+    return [drive + rest[:i + 1] + last, drive + rest.split(":", 1)[0].rstrip(" .")]
+
+
+def match_forms(p):
+    """Every form a protected or config check looks at: both path forms plus their stream-stripped variants."""
+    out = []
+    for f in path_forms(p):
+        for g in strip_stream(f):
+            if g not in out:
+                out.append(g)
+    return out
+
+
+def _scratch_form(form):
+    parts = [x.lower() for x in re.split(r"[\\/]+", form) if x]
+    if not parts:
+        return False
+    base = parts[-1]
+    if any(x.startswith(".") for x in parts) or base in SCRATCH_NEVER:
+        return False
+    if base.endswith(".md") and (base.startswith("scratch-") or base.endswith(".scratch.md")):
+        return True
+    return base.endswith((".md", ".txt")) and "_scratch" in parts[:-1]
+
+
+def scratch_path(p):
+    """Scratch files (not work to review): scratch-*.md, *.scratch.md, or a .md/.txt file in a folder named _scratch.
+    Never inside a dot-folder, never a well-known config/instruction file, never a stream (`x.md:y`), and only when
+    EVERY form of the path (absolute and real, so a junction named _scratch proves nothing) is scratch."""
+    forms = path_forms(p)
+    return not any(has_stream(f) for f in forms) and all(_scratch_form(f) for f in forms)
+
+
 def under(path, root):
     path, root = norm_path(path), norm_path(root)
     return path == root or path.startswith(root.rstrip("\\/") + os.sep)
+
+
+def _under_form(path, root):
+    return path == root or path.startswith(root.rstrip("\\/") + os.sep)
+
+
+def under_forms(path_fs, root):
+    """True when ANY form of the path is under ANY form of the root."""
+    roots = path_forms(root)
+    return any(_under_form(pf, rf) for pf in path_fs for rf in roots)
+
+
+# What counts as a config path (contracts 6.4c): the files that define how sessions and agents behave.
+CONFIG_BASENAMES = {"claude.md", "claude.local.md", "skill.md", ".claude.json", ".mcp.json"}
+CONFIG_SUBDIRS = {"skills", "agents", "commands", "hooks", "rules", "output-styles", "plugins"}
+_SETTINGS_RE = re.compile(r"settings[\w.-]*\.json|settin~\d+\.jso")
+_SHORT_NAME_RE = re.compile(r"claude~\d+\.(?:jso|md)|mcp~\d+\.jso")   # 8.3 short forms: .claude.json, CLAUDE.local.md, .mcp.json
+_SHORT_SUBDIR_RE = re.compile(r"output~\d+")            # the 8.3 short form of output-styles
+_SHORT_DIR_RE = re.compile(r"claude~\d+")               # the 8.3 short form of .claude
+
+
+def _config_form(form):
+    parts = [x.lower() for x in re.split(r"[\\/]+", form) if x]
+    if not parts:
+        return False
+    if parts[-1] in CONFIG_BASENAMES or _SHORT_NAME_RE.fullmatch(parts[-1]):
+        return True
+    for i, c in enumerate(parts[:-1]):
+        if c != ".claude" and not _SHORT_DIR_RE.fullmatch(c):
+            continue
+        if parts[i + 1] in CONFIG_SUBDIRS or _SHORT_SUBDIR_RE.fullmatch(parts[i + 1]):
+            return True
+        if i == len(parts) - 2 and (parts[-1].endswith(".md") or _SETTINGS_RE.fullmatch(parts[-1])):
+            return True
+    return False
+
+
+def config_path(p):
+    """True when ANY form of the path (real, absolute, stream-stripped) is a config path."""
+    return any(_config_form(f) for f in match_forms(p))
 
 
 def now_iso():
@@ -206,21 +312,41 @@ class Ctx:
         t = (t or "").lower()
         return (self.wf.get("aliases") or {}).get(t, t)
 
-    def is_exempt(self, path):
-        p = norm_path(path)
-        base = os.path.basename(p)
-        if base.endswith("build-log.md") or base.endswith(".notes.md"):
-            return True
+    def _exempt_dirs(self):
         dirs = list(self.cfg.get("exempt_dirs") or [])
         dirs += [os.path.join(os.path.expanduser("~"), ".claude"), r"D:\AI\atlas-data"]
         if self.cfg.get("exempt_temp", True):
             dirs.append(tempfile.gettempdir())
-        return any(under(p, r) for r in dirs if r)
+        return [r for r in dirs if r]
+
+    def is_exempt(self, path):
+        """Exempt from edit recording. A stream path is never exempt; otherwise EVERY form of the path (absolute and
+        real) must be exempt on its own, so a junction or symlink cannot borrow an exempt name or folder."""
+        forms = path_forms(path)
+        if any(has_stream(f) for f in forms):
+            return False
+        dirs = self._exempt_dirs()
+        for f in forms:
+            base = os.path.basename(f)
+            if base.endswith("build-log.md") or base.endswith(".notes.md") or _scratch_form(f):
+                continue
+            if any(under_forms([f], r) for r in dirs):
+                continue
+            return False
+        return True
 
     def is_protected(self, path):
+        """The ledger, the hooks folders and the anchor clone. ANY form of the path (absolute, real, stream-stripped)
+        under ANY form of a protected root counts."""
         anchors = [r"D:\AI\atlas-anchor", os.environ.get("ATLAS_ANCHOR_REPO"), self.cfg.get("anchor_repo")]
-        return (under(path, self.ledger) or under(path, CONFIG_DIR) or under(path, HERE)
-                or any(under(path, a) for a in anchors if a))
+        forms = match_forms(path)
+        roots = [self.ledger, CONFIG_DIR, HERE] + anchors
+        return any(under_forms(forms, r) for r in roots if r)
+
+    def is_config(self, path):
+        """Files that define how sessions and agents behave (contracts 6.4c); the stronger `is_protected` is checked
+        first by the callers."""
+        return config_path(path)
 
 
 # ------------------------------------------------------------------ lock, state, events
@@ -424,7 +550,8 @@ def fresh_state(sid):
             "needs_changes": 0, "tuid_aid": {}, "budget": None, "escalated": False, "granted": 0, "pending": {},
             "agents": {}, "captured": [], "ended_ids": [], "sent_back_for": None, "playbook_last": None,
             "task_t": None, "spawns": 0, "reminded": None, "plan_ref": None, "plan_auto": False, "last_verdict": None,
-            "last_verdict_seq": None, "nc_at": 0, "spawn_seq": 0, "pub_n": 0, "pub_exp": None}
+            "last_verdict_seq": None, "nc_at": 0, "spawn_seq": 0, "pub_n": 0, "pub_exp": None,
+            "cfg_exp": None}
 
 
 def day_files_desc(H, max_days=30):
@@ -616,8 +743,11 @@ def apply_event(S, e, wf):
         S["pub_exp"] = e.get("expires")
     elif ev == "publish_allowed":
         S["pub_n"] = max(0, S.get("pub_n", 0) - 1)
+    elif ev == "config_grant":
+        S["cfg_exp"] = e.get("expires")
     elif ev == "session_end":
         S["pub_n"] = 0                  # a grant never outlives its session
+        S["cfg_exp"] = None
 
 
 # ------------------------------------------------------------------ outputs
@@ -648,9 +778,13 @@ def tripped(S):
 
 # ------------------------------------------------------------------ patterns
 
-CLAUDE_PATH_RE = re.compile(r"[\\/]claude(?:\.exe)?(?=[\s\"']|$)", re.I)
-CLAUDE_CMD_RE = re.compile(r"(?:^|[;&|(]\s*|\s)(?<![.\/\\\w])claude(?:\.exe)?(?=\s)", re.I)
+# A claude launch: by name (also `claude-code`, as npx runs it, and the .exe/.cmd/.ps1 launchers), after a space or `;&|(,=`;
+# or by path (`/claude`, or the npm package folder `@anthropic-ai/claude-code`; a path ending in `claude-code` alone is not one).
+_CLAUDE_EXT = r"(?:\.exe|\.cmd|\.ps1)?(?=[\s,)\]]|$)"
+CLAUDE_PATH_RE = re.compile(r"(?:[\\/]claude" + _CLAUDE_EXT + r"|@anthropic-ai[\\/]claude-code(?:[\\/][^\s\"']*)?)", re.I)
+CLAUDE_CMD_RE = re.compile(r"(?:^|[;&|(,=\[]\s*|\s)(?<![.\/\\\w])claude(?:-code)?" + _CLAUDE_EXT, re.I)
 CLAUDE_FLAG_RE = re.compile(r"\s(-p|--print|--resume)\b")
+USER_CMD_MENTION_RE = re.compile(r"/(?:allow-config|allow-publish|grant-rework|ack-break)\b", re.I)
 TEAM_RE = re.compile(r"^\s*:\s*team-([a-z]+)\b(.*)$", re.I | re.S)
 TYPE_RE = re.compile(r"^\s*([a-z][a-z0-9-]{0,30})(?:\s+([a-z][a-z0-9-]{0,15}))?\s*$", re.I)
 # optional trailing `task:<id>` (a Plan item: calendar event, series occurrence, or task id). Strict format, no free text.
@@ -660,26 +794,311 @@ PLAN_REF_RE = re.compile(r"^(?:evt_[0-9a-f]{8}(?:@\d{4}-\d\d-\d\d)?|t_[0-9a-f]{8
 VERDICT_RE = re.compile(r"^\W*(?:verdict\W*)?(READY|NEEDS[ _-]CHANGES|ESCALATE(?: TO OPERATOR)?)\b", re.I)
 GRANT_PROMPT_RE = re.compile(r"^\s*/grant-rework\b(?:\s+(\d{1,2}))?")
 ACK_PROMPT_RE = re.compile(r"^\s*/ack-break(?:\s+([A-Za-z0-9_.:-]{1,80}))?\s*$")
-USER_ONLY_RE = re.compile(r"^\s*/(?:ack-break|grant-rework|allow-publish)(?![\w-])", re.I)
-FORWARD_TOOLS = ("CronCreate", "ScheduleWakeup", "SendMessage")
+USER_ONLY_RE = re.compile(r"^\s*/(?:ack-break|grant-rework|allow-publish|allow-config)(?![\w-])", re.I)
+FORWARD_TOOLS = ("CronCreate", "ScheduleWakeup", "SendMessage", "RemoteTrigger",
+                 "mcp__scheduled-tasks__create_scheduled_task", "mcp__scheduled-tasks__update_scheduled_task")
 FORWARD_KEYS = ("prompt", "message", "content", "text", "body", "summary")
 SLASH_RE = re.compile(r"^/([A-Za-z0-9:_-]{1,60})")
 
 
-def forged_grant(cmd):
-    """A command that invokes claude with -p/--print/--resume (by name or by path). Mentions of
-    /grant-rework alone (git messages, greps) pass. Linear: the last flag is found once, then the first
-    claude call is compared with it."""
+# Heads that only print or search: a user-only command inside their arguments is text, not a launch.
+_NON_LAUNCHING = {"echo", "printf", "write-host", "write-output", "grep", "egrep", "fgrep", "rg", "ack",
+                  "select-string", "sls", "findstr",
+                  # lookups and readers: they name claude as a thing to find or read, not to run
+                  "which", "where", "whereis", "type", "get-command", "gcm", "ls", "dir", "cat", "get-content", "gc",
+                  "get-item", "get-childitem", "gci", "stat", "file", "head", "tail", "wc", "readlink", "realpath",
+                  # process lookups and file tools: claude is the name of a process or a file they act on, not a program they run
+                  "get-process", "gps", "ps", "stop-process", "kill", "taskkill", "tasklist", "test-path",
+                  "gh", "pip", "pip3", "cd", "pushd", "set-location", "sl", "chdir", "mkdir", "md",
+                  "rm", "del", "erase", "remove-item", "ri", "rmdir", "rd", "mv", "move", "move-item", "mi"}
+_NPM_READS = {"view", "ls", "list", "info"}
+_FIND_RUNS = {"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fls", "-fprintf"}
+_GROUPED_CLAUDE_RE = re.compile(r"\(\s*[\"']*(?:&\s*)?[\"']*(?:[^\s()\"']*[\\/])?claude(?:-code)?(?:\.exe|\.cmd|\.ps1)?(?=[\s,)\]\"']|$)", re.I)
+
+
+_CALL_GROUP_RE = re.compile(r"(?<![&>])&\s*\(")        # PowerShell's call operator on a group: `& (gcm claude)`
+
+
+def _has_subst(text):
+    """True when the text holds something that runs a command inside an argument: `$(` or a backtick outside single
+    quotes (bash and PowerShell both keep a single-quoted one as text; double quotes still run it), an unquoted process
+    substitution `<(` or `>(`, or an unquoted `(` that opens with claude (`cat (claude x)`, `echo @(claude x)`: PowerShell
+    runs a parenthesised argument as a command; inside quotes a `(` is text). Conservative: a text with a heredoc
+    operator, or an unclosed single quote, is judged on the bare characters."""
+    if "<<" in text:
+        return ("$(" in text or "`" in text or "<(" in text or ">(" in text or bool(_GROUPED_CLAUDE_RE.search(text))
+                or bool(_CALL_GROUP_RE.search(text)))
+    sq = dq = False
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if sq:
+            sq = c != "'"
+        elif c == "\\" and dq:
+            i += 1
+        elif c == "'" and not dq:
+            sq = True
+        elif c == '"':
+            dq = not dq
+        elif c == "`" or (c == "$" and text[i + 1:i + 2] == "("):
+            return True
+        elif not dq and ((c in "<>" and text[i + 1:i + 2] == "(") or (c == "(" and _GROUPED_CLAUDE_RE.match(text, i))
+                         or (c == "&" and _CALL_GROUP_RE.match(text, i))):
+            return True
+        i += 1
+    return sq and ("$(" in text or "`" in text or "<(" in text or ">(" in text or bool(_GROUPED_CLAUDE_RE.search(text))
+                   or bool(_CALL_GROUP_RE.search(text)))
+
+
+def _non_launching(seg, subst=False):
+    """True when the segment's head is a tool that does not run what its arguments name: echo/printf, the grep family,
+    lookups and readers (which, ls, cat...), process and file tools (Get-Process, taskkill, rm, mv, cd...), `find` without
+    an -exec, `npm view`, a python script given by path, and git without a program-running option (`git -c core.pager=...`,
+    `--upload-pack`, `-O`...). `subst`: the command holds a running substitution or grouping (see _has_subst), which
+    still runs under any of them."""
+    if subst or "(&" in seg:
+        return False
+    toks = seg.split()
+    if toks and toks[0].startswith("("):
+        toks[0] = toks[0].lstrip("(")
+        toks = [t for t in toks if t]
+    head, rest = _head_of(toks)
+    if head == "find":
+        return not any(a.lower() in _FIND_RUNS for a in rest)
+    if head == "npm":
+        return bool(rest) and rest[0].lower() in _NPM_READS
+    if head in ("py", "python", "python3"):
+        # a script given by path (`py -3.12 tools/x.py "claude team"`): the words after it are its arguments. -c / -m stay scanned.
+        for a in rest:
+            if a.startswith("-"):
+                if a.lower().startswith(("-c", "-m")):
+                    return False
+                continue
+            return a.lower().endswith(".py")
+        return False
+    if head in _NON_LAUNCHING:
+        return not _out_flag(head, rest, lambda s: False)
+    if head == "git":
+        return not (_out_flag("git", rest, lambda s: False) or any(a.startswith(_GIT_RUNS_PROGRAM) for a in rest))
+    return False
+
+
+def _spawn_name(norm, subst=False):
+    """The user-only command an interactive claude is handed in a (normalised) text, else None. Per segment."""
+    if not USER_CMD_MENTION_RE.search(norm):
+        return None
+    for seg in SEGMENT_SPLIT_RE.split(norm):
+        m = USER_CMD_MENTION_RE.search(seg)
+        if m and (CLAUDE_CMD_RE.search(seg) or CLAUDE_PATH_RE.search(seg)) and not _non_launching(seg, subst):
+            return m.group(0).lower()
+    return None
+
+
+def _flag_name(norm):
+    """claude with -p/--print/--resume (by name or path): the user-only command it names, else /grant-rework."""
     last_flag = -1
-    for m in CLAUDE_FLAG_RE.finditer(cmd):
+    for m in CLAUDE_FLAG_RE.finditer(norm):
         last_flag = m.start()
     if last_flag < 0:
-        return False
+        return None
     for rx in (CLAUDE_CMD_RE, CLAUDE_PATH_RE):
-        m = rx.search(cmd)
+        m = rx.search(norm)
         if m and m.end() <= last_flag:
-            return True
+            hit = USER_CMD_MENTION_RE.search(norm)
+            return hit.group(0).lower() if hit else "/grant-rework"
+    return None
+
+
+_READS_STDIN_EXTRA = {"iex", "invoke-expression", "eval", "claude", "claude-code", "source", "."}
+
+
+_STRIP_MEMO = [None, None]                  # the last command and its result (forged_grant_name and claude_shell_launch both ask)
+
+
+def _strip_data_heredocs(cmd):
+    if _STRIP_MEMO[0] == cmd and _STRIP_MEMO[1] is not None:
+        return _STRIP_MEMO[1]
+    out = _strip_data_heredocs_once(cmd)
+    _STRIP_MEMO[0], _STRIP_MEMO[1] = cmd, out
+    return out
+
+
+def _strip_data_heredocs_once(cmd):
+    """The command without the bodies of heredocs that nothing executes (`git commit -F - <<'EOF'`, `$(cat <<'EOF' ...)`):
+    that text is data, so a user-only command named in a commit message is not a spawn. Only the bodies `_shell_split`
+    itself returns are cut (it knows the quoting; `$((1<<2))` and a `<<` inside quotes are not heredocs). A body is kept
+    when its delimiter is unquoted and it holds `$(` or a backtick (the shell runs those), when its pipeline reads stdin
+    as code or is claude itself (a shell, an interpreter, `eval`, `iex`, `claude`, a file redirection), and when it sits
+    in a string handed to such a program. A body with no closing line is kept."""
+    if "<<" not in cmd:
+        return cmd
+    todo, seen, cuts = [(cmd, 0, False)], 0, []
+    while todo and seen < 8:                    # the text, then the quoted strings that hold a substitution (`"$(cat <<EOF ...)"`)
+        s, off, inherit = todo.pop()
+        seen += 1
+        meta = {}
+        segs, _docs, nested = _shell_split(s, meta=meta)
+        flags = _pipeline_flags(segs, meta["seps"])
+        for ns, o, nseg in zip(nested, meta["noff"], meta["nseg"]):
+            # a string handed to a program that runs code (`bash -c "$(cat <<EOF ...)"`) is read as code: its bodies stay
+            todo.append((ns, None if off is None or o is None else off + o,
+                         inherit or nseg >= len(flags) or flags[nseg]))
+        for st, en, owner, quoted in meta["spans"]:
+            if off is None or inherit or en <= st:
+                continue
+            body = s[st:en]
+            if not quoted and ("$(" in body or "`" in body):
+                continue                        # an unquoted delimiter: the shell expands the body, so a substitution runs
+            if owner >= len(flags) or flags[owner]:
+                continue
+            cuts.append((off + st, off + en))
+    if todo:
+        return cmd
+    out, pos = [], 0
+    for st, en in sorted(cuts):
+        if st >= pos:
+            out.append(cmd[pos:st])
+            pos = en
+    out.append(cmd[pos:])
+    return "".join(out)
+
+
+def _piped(sep):
+    return "|" in sep and "||" not in sep
+
+
+_FILE_WRITERS = {"tee", "dd", "out-file", "set-content", "add-content", "sc", "ac", "sponge", "tee-object"}
+_STDOUT_REDIR_RE = re.compile(r"1?>")             # `>`, `>>`, `1>`, `1>>` (a `2>` is stderr: the body does not go there)
+
+
+def _pipeline_flags(segs, seps):
+    """One flag per segment: True when the pipeline holding it (segments joined by `|`) may run what it is fed: a head
+    (or, for a token that is not a lone `.`, any word) that is a shell, an interpreter, eval, iex, source or claude
+    itself, or a redirection to a file or `tee` (the body could be run later). One linear pass."""
+    readers = _READS_STDIN_EXTRA | _PUB_SHELLS | _INTERPS
+    flags = [False] * len(segs)
+    lo = 0
+    while lo < len(segs):
+        hi = lo
+        while hi < len(segs) - 1 and _piped(seps.get(hi, "")):
+            hi += 1
+        hit = False
+        for toks in segs[lo:hi + 1]:
+            head, _rest = _head_of(toks)
+            if head in readers or head in _FILE_WRITERS or any(
+                    _STDOUT_REDIR_RE.match(t) or (t != "." and _prog(t) in readers) for t in toks):
+                hit = True
+                break
+        for k in range(lo, hi + 1):
+            flags[k] = hit
+        lo = hi + 1
+    return flags
+
+
+def _join_quoted_newlines(text):
+    """The text with every newline INSIDE a quoted string turned into a space, so a multi-line `-m "...\\nClaude ..."`
+    stays one command (only a newline outside quotes ends one). A `#` comment outside quotes is skipped to its line end
+    (a quote in a comment opens nothing). With an unclosed quote, a backslash right before a quote (`"D:\\AI\\"`, `\\"`,
+    `\\'`: bash and PowerShell disagree) or ANSI-C `$'...'`, the text is returned unchanged (every line still read as a
+    command: fail safe). Linear."""
+    if "\n" not in text or ('"' not in text and "'" not in text):
+        return text
+    if "$'" in text or "\\\"" in text or "\\'" in text:   # escapes read differently by bash and PowerShell: no joining
+        return text
+    out, q, comment, prev = [], None, False, "\n"
+    for c in text:
+        if comment:
+            comment = c != "\n"
+        elif q is None:
+            if c == "#" and prev in " \t\n;&|(":
+                comment = True
+            elif c in "'\"" and prev != "\\":
+                q = c
+        else:
+            if c == q and not (q == '"' and prev == "\\"):
+                q = None
+            elif c in "\r\n":
+                c = " "
+        out.append(c)
+        prev = c
+    return text if q is not None else "".join(out)
+
+
+def forged_grant_name(cmd):
+    """The user-only command (/allow-config, /allow-publish, /grant-rework, /ack-break) that a command tries to hand
+    to a spawned claude, else None. Read on the quote-free text and again with backticks removed (cla''ude, "/allow-con""fig",
+    PowerShell's escape). Two shapes: claude with -p/--print/--resume, or an interactive claude given a user-only
+    command in the same segment (a mention in a git message, echo or grep is not a launch). Honest limit: a command built
+    at run time through a variable ($a='/allow-config'; Start-Process claude $a) is not seen. Linear."""
+    text = _join_quoted_newlines(_strip_data_heredocs(cmd))
+    subst = _has_subst(text)
+    norm = _normalise(text)
+    for f in _claude_forms(norm):
+        name = _spawn_name(f, subst) or _flag_name(f)
+        if name:
+            return name
+    return None
+
+
+_WORD_BACKSLASH_RE = re.compile(r"(?<=[A-Za-z])\\(?=[A-Za-z])")
+
+
+def _claude_forms(norm):
+    """The normalised text, again with backticks removed, and again with the backslashes that sit between two letters
+    removed (`c\\laude`: the shell drops them; a path separator is kept in the other readings), when it names claude at all."""
+    forms = [norm] + ([norm.replace("`", "")] if "`" in norm else [])
+    if "\\" in norm:
+        forms += [_WORD_BACKSLASH_RE.sub("", f) for f in forms]
+    return [f for f in forms if "claude" in f.lower()]
+
+
+_INFO_ARGS = ({"--version"}, {"-v"}, {"--help"}, {"-h"}, {"doctor"})
+_REDIR_TAIL_RE = re.compile(r"\d?>>?(?:&\d|/dev/null|nul)?", re.I)      # `2>&1` arrives split at the &: `2>`
+_REDIR_TARGETS = {"/dev/null", "nul", "$null"}
+CLAUDE_LAUNCH_DENY = ("A session can't start claude from a shell: only the operator starts sessions "
+                      "(claude --version, --help, doctor and mcp list/get are allowed).")
+
+
+def _claude_info_only(args):
+    """True when the words after claude are only an info subcommand: --version, -v, --help, -h, doctor, mcp list,
+    mcp get <name> (a trailing 2>&1 or > /dev/null is allowed)."""
+    toks = args.split()
+    while toks:
+        if _REDIR_TAIL_RE.fullmatch(toks[-1]):
+            toks.pop()
+        elif len(toks) > 1 and toks[-1].lower() in _REDIR_TARGETS and _REDIR_TAIL_RE.fullmatch(toks[-2]):
+            del toks[-2:]
+        else:
+            break
+    if len(toks) == 1 and {toks[0]} in _INFO_ARGS:
+        return True
+    return (len(toks) == 2 and toks[0] == "mcp" and toks[1] == "list") or \
+           (len(toks) == 3 and toks[0] == "mcp" and toks[1] == "get" and not toks[2].startswith("-"))
+
+
+def claude_shell_launch(cmd):
+    """True when a shell command starts claude (by name or path, at a program position: not as an argument of
+    echo/grep/git or a lookup such as `which`) with anything but an info subcommand. A claude started from the Bash tool
+    is always headless and inherits the desktop entry, so a prompt fed through stdin, an argument or a heredoc would be
+    read as typed by the operator: no session may start one. Read like forged_grant_name (data heredocs cut, quotes removed, and
+    again without backticks). Honest limit: claude reached through a variable or a file prepared earlier is not seen."""
+    text = _join_quoted_newlines(_strip_data_heredocs(cmd))
+    subst = _has_subst(text)
+    for f in _claude_forms(_normalise(text)):
+        for seg in SEGMENT_SPLIT_RE.split(f):
+            ms = [m for m in (CLAUDE_CMD_RE.search(seg), CLAUDE_PATH_RE.search(seg)) if m]
+            if not ms or _non_launching(seg, subst):
+                continue
+            toks = seg.split()
+            if len(toks) > 1 and toks[0].lower() == "command" and toks[1] in ("-v", "-V"):
+                continue
+            if not _claude_info_only(seg[min(m.end() for m in ms):].strip().rstrip(")")):
+                return True
     return False
+
+
+def forged_grant(cmd):
+    return forged_grant_name(cmd) is not None
 
 
 def parse_verdict(text):
@@ -897,6 +1316,12 @@ def h_prompt(H):
                 n = min(PUBLISH_GRANT_MAX, max(1, int(pg.group(1) or 1)))
                 exp = (dt.datetime.now().astimezone() + dt.timedelta(minutes=PUBLISH_GRANT_MINUTES)).isoformat(timespec="seconds")
                 tx.emit({"ev": "publish_grant", "n": n, "expires": exp, "entry": H.entry})
+        if CONFIG_PROMPT_RE.match(p) and not H.agent_id:
+            if not entry_interactive(H):
+                tx.emit({"ev": "ignored", "what": "config grant from non-interactive entry"})
+            else:
+                exp = (dt.datetime.now().astimezone() + dt.timedelta(minutes=CONFIG_GRANT_MINUTES)).isoformat(timespec="seconds")
+                tx.emit({"ev": "config_grant", "expires": exp, "entry": H.entry})
         g = GRANT_PROMPT_RE.match(p)
         if g and not H.agent_id:
             if not entry_interactive(H):                  # UserPromptSubmit also fires for scheduled/forwarded prompts
@@ -989,6 +1414,9 @@ BYPASS_DENY = ("Protected Atlas ledger/hooks folder. To look, use the Read or Gr
 END = r"(?![\w-])(?!\.+[\w-])"   # a dot may only start a new name: ledger.bak passes, ledger.\ (Windows strips it) does not
 
 
+_REL_START = r"(?:^|[\s\"'=:]|\.[\\/]+)"     # a relative `atlas-data/ledger` starts a path token (session in D:\AI)
+
+
 def _sep_re(path):
     parts = [p for p in re.split(r"[\\/]+", path.strip()) if p]
     return r"[\\/]+".join(re.escape(p) for p in parts)
@@ -996,7 +1424,11 @@ def _sep_re(path):
 
 def anchor_res(H):
     """The local clone of the outside-anchor repo: only tools/anchor_ledger.py may name it."""
-    res = [re.compile(r"ai[\\/]+atlas-anchor" + END, re.I)]
+    res = [re.compile(r"ai[\\/]+(?:atlas-anchor|atlas-~\d+)" + END, re.I),
+           re.compile(_REL_START + r"atlas-anchor[\\/]", re.I),      # relative: needs a separator, a bare mention is text
+           # ...except as the folder to move into (the session sits in D:\AI): `cd atlas-anchor`, `git -C atlas-anchor`
+           re.compile(r"(?:^|[\s;&|(])(?:cd|pushd|chdir|set-location|sl)\s+(?:-\S+\s+)*atlas-anchor(?![\w.~-])", re.I),
+           re.compile(r"(?:^|[\s;&|(])git\s+(?:-\S+\s+)*-C\s+atlas-anchor(?![\w.~-])", re.I)]
     extra = os.environ.get("ATLAS_ANCHOR_REPO") or (getattr(H, "cfg", None) or {}).get("anchor_repo")
     if extra and len(norm_path(extra)) > 8:
         res.append(re.compile(_sep_re(extra) + END, re.I))
@@ -1004,8 +1436,9 @@ def anchor_res(H):
 
 
 def protected_res(H):
-    res = [re.compile(r"ai[\\/]+atlas-data[\\/]+ledger" + END, re.I),
-           re.compile(r"\.claude[\\/]+hooks[\\/]+atlas" + END, re.I)]
+    res = [re.compile(r"ai[\\/]+(?:atlas-data|atlas-~\d+)[\\/]+ledger" + END, re.I),
+           re.compile(_REL_START + r"atlas-data[\\/]+ledger" + END, re.I),
+           re.compile(r"(?:\.claude|claude~\d+)[\\/]+hooks[\\/]+atlas" + END, re.I)]
     for extra in (H.ledger,):
         if extra and len(norm_path(extra)) > 8:
             res.append(re.compile(_sep_re(extra) + END, re.I))
@@ -1022,6 +1455,70 @@ def _normalise(text):
     return text
 
 
+_DOT_TOKEN_RE = re.compile(r"[^\s;&|<>()]+")
+_ROOT_PREFIX_RE = re.compile(r"(?:~|[A-Za-z]:|\$\{?[\w:]+\}?|%[^%\s]+%)(?=[\\/])")
+_ABS_START_RE = re.compile(r"^(?:[\\/~$%]|[A-Za-z]:)")
+
+
+_OPT_PREFIX_RE = re.compile(r"^(?:--?[\w-]*=|-[\w-]+:|[A-Za-z]\w*=)")      # no separator inside the prefix
+
+
+def _collapse_token(tok, split=True):
+    """`..` collapsed lexically in one token (backslashes read as slashes). A leading `~`, drive or $VAR / %VAR% prefix is
+    kept and acts as the root (`..` above it is dropped). With `split`, an option prefix (`of=`, `--output=`, `-Path:`) is
+    split off once, the rest is collapsed and the prefix glued back (one pass, never recursive); the caller also reads the
+    token unsplit. Linear (posixpath.normpath)."""
+    if ".." not in tok:
+        return tok
+    pre = ""
+    if split:
+        pm = _OPT_PREFIX_RE.match(tok)
+        if pm and pm.end() < len(tok):
+            pre, tok = pm.group(0), tok[pm.end():]
+            if ".." not in tok:
+                return pre + tok
+    t = tok.replace("\\", "/")
+    m = _ROOT_PREFIX_RE.match(t)
+    out = (m.group(0) + posixpath.normpath(t[m.end():])) if m else posixpath.normpath(t)
+    if t[-1:] == "/" and out[-1:] != "/":
+        out += "/"
+    return pre + out
+
+
+def _dot_variants(text, cwd=""):
+    """The quote-free text, then (when it holds `..`) the same text with every `..` collapsed per token, then with the
+    relative `..` tokens resolved against the working folder. Every guard matches ALL of them (as written first)."""
+    norm = _normalise(text)
+    out = [norm]
+    if ".." not in norm:
+        return out
+    for split in (True, False):                     # with the option prefix split off, then the token as written
+        col = _DOT_TOKEN_RE.sub(lambda m: _collapse_token(m.group(0), split), norm)
+        if col != norm and col not in out:
+            out.append(col)
+    if cwd:
+        base = cwd.replace("\\", "/").rstrip("/")
+
+        def resolve_with(split):
+            def resolve(m):
+                tok = m.group(0)
+                if ".." not in tok:
+                    return tok
+                pm = _OPT_PREFIX_RE.match(tok) if split else None      # `of=..`, `--output=..`, `-Path:..`: resolve the part after the prefix
+                pre = pm.group(0) if pm else ""
+                tok = tok[len(pre):]
+                if ".." not in tok or _ABS_START_RE.match(tok):
+                    return pre + tok
+                r = posixpath.normpath(base + "/" + tok.replace("\\", "/"))
+                return pre + (r + "/" if tok[-1:] in "\\/" else r)
+            return resolve
+        for split in (True, False):
+            res = _DOT_TOKEN_RE.sub(resolve_with(split), norm)
+            if res != norm and res not in out:
+                out.append(res)
+    return out
+
+
 def ledger_bypass(H, cmd):
     """The first reference to the ledger or the installed hooks folder in a command segment that does not
     start with a documented tool (or the cwd, when the session sits inside either folder), else None."""
@@ -1034,23 +1531,24 @@ def ledger_bypass(H, cmd):
                 return ("cwd:" + hit.group(0))[:BYPASS_MATCH_MAX]
         if H.ledger and under(H.cwd, H.ledger):
             return "cwd:ledger"
-    for seg in SEGMENT_SPLIT_RE.split(_normalise(cmd)):
-        hit = None
-        for rx in pats:
-            hit = rx.search(seg)
-            if hit:
-                break
-        if not hit:
-            continue
-        s = seg.lstrip()
-        rel_ok = bool(cwd) and bool(ATLAS_CWD_RE.match(cwd.strip()))
-        abs_res, rel_res = ALLOWED_TOOL_RES, ALLOWED_TOOL_REL_RES
-        if any(rx.search(seg) for rx in anchor_res(H)):          # the anchor clone: the anchor tool only
-            abs_res, rel_res = ANCHOR_TOOL_RES, ANCHOR_TOOL_REL_RES
-        if not SMUGGLE_RE.search(s) and (any(rx.match(s) for rx in abs_res)
-                                         or (rel_ok and any(rx.match(s) for rx in rel_res))):
-            continue
-        return hit.group(0)[:BYPASS_MATCH_MAX]
+    rel_ok = bool(cwd) and bool(ATLAS_CWD_RE.match(cwd.strip()))
+    for norm in _dot_variants(cmd, H.cwd or ""):        # as written, `..` collapsed, `..` resolved against the cwd
+        for seg in SEGMENT_SPLIT_RE.split(norm):
+            hit = None
+            for rx in pats:
+                hit = rx.search(seg)
+                if hit:
+                    break
+            if not hit:
+                continue
+            s = seg.lstrip()
+            abs_res, rel_res = ALLOWED_TOOL_RES, ALLOWED_TOOL_REL_RES
+            if any(rx.search(seg) for rx in anchor_res(H)):          # the anchor clone: the anchor tool only
+                abs_res, rel_res = ANCHOR_TOOL_RES, ANCHOR_TOOL_REL_RES
+            if not SMUGGLE_RE.search(s) and (any(rx.match(s) for rx in abs_res)
+                                             or (rel_ok and any(rx.match(s) for rx in rel_res))):
+                continue
+            return hit.group(0)[:BYPASS_MATCH_MAX]
     return None
 
 
@@ -1303,7 +1801,7 @@ def _target_label(c):
     """A short label of what the command names (no command text): ledger-day:YYYY-MM-DD, hooks-config,
     hooks-program, hooks-folder or ledger."""
     low = c.lower()
-    if re.search(r"\.claude[\\/]+hooks[\\/]+atlas", low):
+    if re.search(r"(?:\.claude|claude~\d+)[\\/]+hooks[\\/]+atlas", low):
         if "atlas_config" in low:
             return "hooks-config"
         if "atlas_hook" in low:
@@ -1492,7 +1990,35 @@ def _pkg_head(tok):
     return _PKG_ALIASES.get(_prog(tok), tok)
 
 
-def _shell_split(text, psb=False):
+_ARITH_TOKEN_RE = re.compile(r"\n|\(\(|\)\)|\$\[|\]")
+
+
+def _arith_tracker(text):
+    """A function `inside(i)` for increasing positions i: True when the `<<` at i follows an unclosed `((`, `$((` or `$[` on
+    its line (an arithmetic shift, not a heredoc). The text is read once, forward, in the same pass as the splitter (no
+    look-back window, so padding cannot push the opener out of sight): linear however many queries are made."""
+    st = {"pos": 0, "paren": False, "brack": False}
+
+    def inside(i):
+        for m in _ARITH_TOKEN_RE.finditer(text, st["pos"], i):
+            t = m.group()
+            if t == "\n":
+                st["paren"] = st["brack"] = False
+            elif t == "((":
+                st["paren"] = True
+            elif t == "))":
+                st["paren"] = False
+            elif t == "$[":
+                st["brack"] = True
+            else:
+                st["brack"] = False
+        st["pos"] = max(st["pos"], i)
+        return st["paren"] or st["brack"]
+
+    return inside
+
+
+def _shell_split(text, psb=False, meta=None):
     """One linear pass: (segments, heredoc bodies, double-quoted strings holding $( or a backtick). Segments are token
     lists split on unquoted ; & | ( ) backtick and newline; quotes are removed, `\\"` is unescaped inside double quotes,
     a backslash before a space keeps the space in the token, `#` at a token start comments out the line, a
@@ -1503,14 +2029,22 @@ def _shell_split(text, psb=False):
     (`HEAD@{1}`, `${x}`, `@{u}`, `a.{txt,bak}`, `@{`) and every quoted brace stay plain text. An unquoted `{#` stays text
     (so the `#` is not read as a comment) and an unquoted `{}` at a word start (`find -exec rm {} ;`, `{}/..`) is kept as text.
     `psb=True` is the PowerShell-braces reading: EVERY unquoted `{` and `}` is a boundary (`%{git push}`, `try{...}catch{}`),
-    except the `${name}` variable syntax; the caller unions it with the plain reading."""
+    except the `${name}` variable syntax; the caller unions it with the plain reading.
+    `meta` (a dict, optional) is filled for the heredoc stripper: `spans` = (start, end, owner segment index, quoted
+    delimiter) of each closed body in `text`; `seps` = {segment index: the separator run that ended it}; `noff` = for each
+    entry of the third result, its offset in `text` (None when the string was changed by unescaping) in `noff` and the
+    index of the segment that holds it in `nseg`.
+    A `<<` after an unclosed `((`, `$((` or `$[` on its line is an arithmetic shift, not a heredoc."""
     segs, docs, nested = [], [], []
+    if meta is not None:
+        meta.update(spans=[], seps={}, noff=[], nseg=[])
     toks, cur = [], []
     have = False
     bal = 0
     no_close = False                            # no `}` left in the text (so a `${` is not searched again: stays linear)
     pend = []
     heredocs = True
+    in_arith = _arith_tracker(text)
     n, i = len(text), 0
     while i < n:
         c = text[i]
@@ -1537,11 +2071,22 @@ def _shell_split(text, psb=False):
             s = "".join(buf)
             if "$(" in s or "`" in s:
                 nested.append(s)
+                if meta is not None:
+                    meta["noff"].append(i + 1 if s == text[i + 1:j] else None)
+                    meta["nseg"].append(len(segs))
             cur.append(s)
             have = True
             i = j + 1
         elif c == "\\" and text[i + 1:i + 2] == " ":
             cur.append(" ")                     # an escaped space stays inside the token (/my\ dir/git)
+            have = True
+            i += 2
+        elif c == "\\" and text[i + 1:i + 2] == "<":
+            cur.append("<")                     # an escaped < is text: `a\<<EOF` has no heredoc
+            have = True
+            i += 2
+        elif c == "\\" and text.startswith("\\\\<", i):
+            cur.append("\\")                    # an escaped backslash: the < after it is real
             have = True
             i += 2
         elif c in " \t\r" or (c == "\\" and text[i + 1:i + 2] in ("\n", "\r")):
@@ -1562,29 +2107,36 @@ def _shell_split(text, psb=False):
             if toks:
                 segs.append(toks)
                 toks = []
+                if meta is not None:
+                    meta["seps"][len(segs) - 1] = c
+            elif segs and meta is not None and len(segs) - 1 in meta["seps"]:
+                meta["seps"][len(segs) - 1] += c            # `&&`, `||`, `|&`, `) |`: the run that ended the segment
             i += 1
             if c == "\n" and pend:
-                for delim, strip in pend:
-                    start, body, closed = i, [], False
+                for delim, strip, quoted, owner in pend:
+                    start, body, closed, bend = i, [], False, i
                     while i < n:
+                        ls = i
                         e = text.find("\n", i)
                         line = text[i:n if e < 0 else e]
                         i = n if e < 0 else e + 1
                         chk = line.rstrip("\r")
                         if (chk.lstrip("\t") if strip else chk) == delim:
-                            closed = True
+                            closed, bend = True, ls
                             break
                         body.append(line)
                     if not closed:          # no closing line (for example `$((1<<2))`): read the rest as plain commands
                         i, heredocs = start, False       # (once: later `<<` are plain too, so the pass stays linear)
                         break
                     docs.append("\n".join(body))
+                    if meta is not None:
+                        meta["spans"].append((start, bend, owner, quoted))
                 pend = []
         elif c == "<" and text.startswith("<<<", i):
             cur.append("<<<")                   # a here-string: its word is read as an argument
             have = True
             i += 3
-        elif c == "<" and heredocs and text.startswith("<<", i):
+        elif c == "<" and heredocs and text.startswith("<<", i) and not in_arith(i):
             if have:
                 toks.append("".join(cur))
                 cur, have = [], False
@@ -1593,13 +2145,15 @@ def _shell_split(text, psb=False):
                 strip, j = True, j + 1
             while j < n and text[j] in " \t":
                 j += 1
-            word = []
+            word, quoted = [], False
             while j < n and text[j] not in " \t\r\n;&|()<>":
-                if text[j] not in "'\"":
+                if text[j] in "'\"\\":
+                    quoted = True                   # 'EOF', "EOF" and \EOF: the body is not expanded
+                else:
                     word.append(text[j])
                 j += 1
             if word:
-                pend.append(("".join(word), strip))
+                pend.append(("".join(word), strip, quoted, len(segs)))
             i = j
         elif psb and c in "{}":
             if c == "{" and have and cur and cur[-1].endswith("$"):          # ${name}: a variable, not a block
@@ -2009,14 +2563,18 @@ def _publish_scan(H, text, depth, ctx):
         work[0] += len(text)
         if work[0] > PUBLISH_WORK_MAX:
             return ["unreadable command"]
-    segs, docs, nested = _shell_split(text, ctx.get("psb", False))
+    meta = {}
+    segs, docs, nested = _shell_split(text, ctx.get("psb", False), meta=meta)
     out = []
     for toks in segs:
         out += _publish_segment(H, toks, depth, ctx)
     for s in nested:
         out += _publish_scan(H, s, depth + 1, ctx)
-    if ctx.get("shell_stdin"):          # a heredoc body fed to a shell is a script
-        for d in docs:
+    # a heredoc body fed to a shell is a script; an UNQUOTED delimiter means the shell expands the body, so a `$(...)` or
+    # backtick in it runs whatever shell it is fed to (`cat <<EOF` ... `$(git push)` ... `EOF`)
+    for k, d in enumerate(docs):
+        quoted = meta["spans"][k][3] if k < len(meta["spans"]) else True
+        if ctx.get("shell_stdin") or (not quoted and ("$(" in d or "`" in d)):
             out += _publish_scan(H, d, depth + 1, ctx)
     return out
 
@@ -2056,6 +2614,105 @@ def publish_grant_open(S, n=1):
         return False
 
 
+GRANT_SCAN_WINDOW = dt.timedelta(hours=2)       # grants older than this cannot be live (a window is 30 minutes)
+GRANT_SCAN_BYTES = 16 * 1024 * 1024             # most that is read from the end of one day file
+GRANT_SCAN_CHUNK = 128 * 1024
+_GRANT_EVS = ('"ev": "publish_grant"', '"ev": "publish_allowed"', '"ev": "config_grant"', '"ev": "session_end"')
+_LINE_T_RE = re.compile(r'"t": "([^"]{19,40})"')
+
+
+def _tail_lines(path, max_bytes):
+    """The lines of a file from the last to the first, read in chunks from the end (at most max_bytes)."""
+    try:
+        fh = open(path, "rb")
+    except OSError:
+        return
+    with fh:
+        size = fh.seek(0, os.SEEK_END)
+        pos, read, buf = size, 0, b""
+        while pos > 0 and read < max_bytes:
+            step = min(GRANT_SCAN_CHUNK, pos)
+            pos -= step
+            read += step
+            fh.seek(pos)
+            buf = fh.read(step) + buf
+            parts = buf.split(b"\n")
+            buf = parts[0]                      # may be the end of a line that starts in the previous chunk
+            for ln in reversed(parts[1:]):
+                if ln.strip():
+                    yield ln.decode("utf-8", "replace")
+        if pos == 0 and buf.strip():
+            yield buf.decode("utf-8", "replace")
+
+
+def ledger_grant_state(H):
+    """The grant part of this session's state (pub_n, pub_exp, cfg_exp) replayed from the LEDGER day files (today's, and
+    yesterday's for a grant just after midnight), read from the end and only back to GRANT_SCAN_WINDOW ago or this
+    session's last session_end. The state cache can be forged; the ledger is the record. Raises on I/O trouble (the
+    callers deny)."""
+    now = dt.datetime.now().astimezone()
+    cutoff = now - GRANT_SCAN_WINDOW
+    needle = '"sid": ' + json.dumps(H.sid)
+    evs, stop = [], False
+    for back in (0, 1):
+        day = (now - dt.timedelta(days=back)).strftime("%Y-%m-%d")
+        for line in _tail_lines(os.path.join(H.ledger, f"events-{day}.jsonl"), GRANT_SCAN_BYTES):
+            tm = _LINE_T_RE.search(line, 0, 120)
+            if tm:
+                try:
+                    if dt.datetime.fromisoformat(tm.group(1)) < cutoff:
+                        stop = True
+                        break
+                except (ValueError, TypeError):
+                    pass
+            if needle not in line or not any(k in line for k in _GRANT_EVS):
+                continue
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(e, dict) or e.get("sid") != H.sid or e.get("agent_id"):
+                continue
+            cap = {"publish_grant": PUBLISH_GRANT_MINUTES, "config_grant": CONFIG_GRANT_MINUTES}.get(e.get("ev"))
+            if cap:
+                # a replayed grant never outlives t + its window, whatever its own `expires` says; a line whose t is
+                # unreadable or has no timezone is skipped (it cannot be a grant the hook wrote)
+                try:
+                    t0 = dt.datetime.fromisoformat(str(e.get("t")))
+                    if t0.tzinfo is None or t0 > now + dt.timedelta(minutes=2):
+                        continue                    # no timezone, or dated in the future: not a line the hook wrote
+                    limit = t0 + dt.timedelta(minutes=cap)
+                    try:
+                        exp = dt.datetime.fromisoformat(str(e.get("expires")))
+                        if exp.tzinfo is not None and exp < limit:
+                            limit = exp
+                    except ValueError:
+                        pass
+                except (ValueError, TypeError):
+                    continue
+                e = dict(e, expires=limit.isoformat(timespec="seconds"))
+            evs.append(e)
+            if e.get("ev") == "session_end":
+                stop = True
+                break
+        if stop:
+            break
+    S = {"pub_n": 0, "pub_exp": None, "cfg_exp": None}
+    for e in reversed(evs):
+        apply_event(S, e, None)                 # only grant events: the workflow table is not needed
+    return S
+
+
+def ledger_grant_ok(H, kind, count=1):
+    """True when the ledger itself shows a live grant of this kind for this session (False on any trouble)."""
+    try:
+        S = ledger_grant_state(H)
+    except BaseException:  # noqa: BLE001
+        log_error()
+        return False
+    return config_grant_open(S) if kind == "config" else publish_grant_open(S, count)
+
+
 def publish_gate(H, whats):
     """Deny a publish command unless the MAIN session holds enough allowances (one per publish in the command; they are
     all used up together). The DENY is decided before the ledger lock is taken, from the state cache: no grant, a helper,
@@ -2064,23 +2721,357 @@ def publish_gate(H, whats):
     count = len(whats)
     S = cached_state(H)
     actor, _aid, _label = _actor_of(H, S or {})
+    not_in_ledger = False
     if actor == "main" and S is not None and publish_grant_open(S, count):
-        try:
-            with Txn(H, tries=PUBLISH_LOCK_TRIES, strict=True, light=True) as tx:
-                if publish_grant_open(tx.state, count):
-                    for w in whats:
-                        tx.emit({"ev": "publish_allowed", "what": w})
-                    return None
-        except BaseException:  # noqa: BLE001 - lock busy or log unwritable: deny
-            log_error()
+        if not ledger_grant_ok(H, "publish", count):      # the cache says yes, the ledger does not: the cache is not trusted
+            not_in_ledger = True
+        else:
+            try:
+                with Txn(H, tries=PUBLISH_LOCK_TRIES, strict=True, light=True) as tx:
+                    if publish_grant_open(tx.state, count):
+                        for w in whats:
+                            tx.emit({"ev": "publish_allowed", "what": w})
+                        return None
+            except BaseException:  # noqa: BLE001 - lock busy or log unwritable: deny
+                log_error()
     try:
         with Txn(H, tries=PUBLISH_LOG_TRIES, light=True) as tx:
             tx.nosave = True                    # the refusal changes nothing in state: never write the cache here
+            if not_in_ledger:
+                tx.emit({"ev": "ignored", "what": "grant not in ledger"})
             tx.emit({"ev": "refusal", "task": tx.state.get("task"), "guard": "publish", "would": False,
                      "what": whats[0], "count": count, "actor": actor, "detail": PUBLISH_DENY})
     except BaseException:  # noqa: BLE001
         log_error()
     return deny(PUBLISH_DENY)
+
+
+# ------------------------------------------------------------------ config gate (contracts §6.4c)
+# An edit to the files that define how sessions and agents behave (CLAUDE.md, skills, agent definitions, commands, rules,
+# settings; see `config_path`) is refused in EVERY mode unless the operator typed /allow-config in this session. The
+# grant is a 15-minute window (one change often takes several edits). Same design as the publish gate: the deny is
+# decided from the state cache before the ledger lock, the lock is only taken to log the allowed change, a helper is
+# always refused, and the refusal is logged best effort. Shell commands are read per segment: a segment that names a
+# config path and is not a plain read is gated. Honest limits: a script that writes the file internally (`python -m`),
+# a patch applied from a file (`git apply`, `patch`), a path built at run time, an alias, and non-shell tools (MCP servers,
+# an editor's own save) are not seen.
+
+CONFIG_GRANT_MINUTES = 15
+CONFIG_LOCK_TRIES = 10                 # x 50 ms: logging an allowed change waits at most ~0.5 s for the ledger lock
+CONFIG_LOG_TRIES = 4                   # x 50 ms: logging a refusal waits at most ~0.2 s, then writes unlocked
+CONFIG_PROMPT_RE = re.compile(r"^\s*/allow-config(?![\w-])")
+CONFIG_DENY = ("Changing instructions, skills or settings needs the operator's OK: show the operator the exact change, "
+               "then ask the operator to type /allow-config.")
+_CD = r"(?:\.claude|claude~\d+)"                       # the folder, or its 8.3 short name
+_SUBS = r"(?:skills|agents|commands|hooks|rules|output-styles|output~\d+|plugins)"
+_NAME_START = r"(?:^|[\\/\s\"'=])"
+CONFIG_SHELL_RES = [
+    ("claude-folder", re.compile(_CD + r"[\\/]+" + _SUBS + r"(?![\w-])", re.I)),
+    ("claude-md", re.compile(_CD + r"[\\/]+(?!projects(?![\w-]))[^\\/\s\"'|;&]*\.md(?![\w.-])", re.I)),
+    ("settings", re.compile(_CD + r"[\\/]+settin(?:gs[\w.-]*\.json|~\d+\.jso)", re.I)),
+    ("claude-json", re.compile(_NAME_START + r"(?:\.claude\.json|claude~\d+\.jso)(?![\w.-])", re.I)),
+    ("mcp-json", re.compile(_NAME_START + r"(?:\.mcp\.json|mcp~\d+\.jso)(?![\w.-])", re.I)),
+    ("instruction-file", re.compile(_NAME_START + r"(?:(?:claude(?:\.local)?|skill)\.md|claude~\d+\.md)(?![\w.-])", re.I)),
+    # the bare folder as the LAST path component (an archive extracted into it, `git -C` on it, a junction to it)
+    ("claude-root", re.compile(r"(?<![\w.~-])" + _CD + r"[\\/]*\.?(?=$|[\s;&|()<>\"'])", re.I)),
+]
+CONFIG_PATS = [rx for _label, rx in CONFIG_SHELL_RES]
+CONFIG_CWD_RE = re.compile(r"(?<![\w.~-])" + _CD + r"(?:[\\/]+" + _SUBS + r"(?:[\\/]|$)|[\\/]*\.?$)", re.I)
+CONFIG_HINTS = (".claude", "claude~", "mcp~", "claude.md", "claude.local.md", "skill.md", ".mcp.json", "settings", "install_")
+_EVERYTHING = [re.compile(r"\A(?!/dev/null\Z|nul\Z|\$null\Z)", re.I)]                       # "every path is protected": used where the working folder is a config folder
+_LATER_RUNNERS = {"xargs", "sh", "bash", "zsh", "cmd", "powershell", "pwsh", "iex", "invoke-expression", "%",
+                  "foreach-object", "foreach", "while", "source", "."}
+_MOVE_TOOLS = {"mv", "move", "move-item", "mi", "ln"}
+_INSTALLERS = {"install_skills.py", "install_hooks.py"}
+_RUNNERS = _INTERPS | {"uv", "pipx", "poetry", "npx", "xargs"}
+_CD_TOOLS = {"cd", "pushd", "chdir", "set-location", "sl"}
+_PRINT_TOOLS = {"echo", "printf", "write-host", "write-output", "write-error", "write-warning",
+                "mkdir", "md"}      # mkdir only makes an empty folder: no instruction changes
+_GIT_NO_WRITE = {"add", "commit", "branch", "tag", "remote", "rev-parse", "rev-list", "ls-files", "blame",
+                 "status", "log", "show", "diff", "shortlog", "describe"}
+# options that run a program or take a config value: a git segment carrying one is never upgraded to a read
+_GIT_RUNS_PROGRAM = ("--upload-pack", "--receive-pack", "--exec", "-O", "--open-files-in-pager", "-c", "--config")
+_SED_PRINT_RE = re.compile(r"(?:\d+|\$)?(?:,(?:\d+|\$))?p|/[^/\s;{}wWeE]*/p")
+
+
+class _GlobCfg:
+    """A path token that names the .claude folder (or its 8.3 name) and cannot be read literally: it holds a glob character
+    (`?`, `*`, `[`) or, in a POSIX-looking path, a backslash escape before a name character. Quacks like a compiled regex
+    (`search`, `pattern`) so `_segment_effect` can use it as a protected-path pattern."""
+    pattern = r"[^\s;&|<>]*(?:\.claude|claude~)[^\s;&|<>]*"
+    _tok = re.compile(pattern, re.I)
+    _glob = re.compile(r"[?*\[]")
+    _esc = re.compile(r"\\[^\\/\s]")
+    _free = re.compile(r"(?:\.claude|claude~\d+)[\\/]+(?:projects|worktrees)[\\/]", re.I)
+    _nested = re.compile(r"claude|\.mcp|mcp~", re.I)
+
+    def search(self, text):
+        for m in self._tok.finditer(text):
+            t = m.group(0)
+            g = self._glob.search(t)
+            e = self._esc.search(t) if "/" in t else None
+            if not (g or e):
+                continue
+            first = min(x.start() for x in (g, e) if x)
+            # projects/ and worktrees/ stay free (memory notes, worktree cleanup): a glob that only comes AFTER that
+            # component is not gated, unless the token holds `..` (it could climb back out to agents/ or skills/)
+            # (and not when what follows names a nested config file: `worktrees/w/.claude/settings.jso?`, `CLAUDE.m?`)
+            fm = self._free.search(t)
+            if fm and fm.end() <= first and ".." not in t and not self._nested.search(t[fm.end():]) \
+                    and not self._names_config(t[fm.end():]):
+                continue
+            return m
+        return None
+
+    # what a glob or an escape could name under projects/ or worktrees/: examples of every config name (a glob pattern is
+    # matched against them), and the folders that count only below a .claude-like component
+    _FILES = (".claude", "claude~1", "mcp~1", "claude.md", "claude.local.md", "skill.md", ".mcp.json", ".claude.json",
+              "settings.json", "settings.local.json", "claude~1.md", "claude~1.jso", "mcp~1.jso", "settin~1.jso")
+    _plain_ext = re.compile(r"[*?]+\.(?:md|json|txt|ya?ml|log|tmp|bak|py|js|ts|sh|ps1|csv)")
+    _FOLDERS = ("skills", "agents", "commands", "hooks", "rules", "output-styles", "plugins")
+    _LITERAL = re.compile(r"\.claude|claude~\d+|mcp~\d+|claude(?:\.local)?\.md|skill\.md|\.mcp\.json|\.claude\.json"
+                          r"|settings[\w.-]*\.json|claude~\d+\.md", re.I)
+
+    def _names_config(self, rest):
+        """True when a glob (or backslash-escaped) component below the free one (the worktree / project name) can name a
+        config file or folder: fnmatch, case-insensitive, against the config names. `rest` = the token after `worktrees/`."""
+        readings = [(re.split(r"[\\/]+", rest), None)]
+        if "/" in rest:
+            raw = rest.split("/")
+            readings.append(([c.replace("\\", "") for c in raw], ["\\" in c for c in raw]))
+        for comps, esc in readings:
+            prev_cfg = False
+            done = {}                           # a component repeated (`*/*/*/...`) is judged once: stays linear
+            for k, comp in enumerate(comps[1:], 1):
+                low = comp.lower()
+                key = (low, prev_cfg, esc is not None and esc[k])
+                if key in done:
+                    prev_cfg = done[key]        # (judged before with the same previous component: nothing new)
+                    continue
+                is_glob = bool(self._glob.search(low))
+                hit = False
+                if is_glob and self._plain_ext.fullmatch(low):
+                    pass                        # `*.md`, `*.json`: memory notes and the like; a glob that names only an extension
+                elif is_glob:
+                    hit = any(fnmatch.fnmatchcase(n, low) for n in self._FILES) or (
+                        prev_cfg and any(fnmatch.fnmatchcase(n, low) for n in self._FOLDERS))
+                elif esc is not None and esc[k]:
+                    hit = bool(self._LITERAL.fullmatch(low)) or (prev_cfg and low in self._FOLDERS)
+                if hit:
+                    return True
+                prev_cfg = done[key] = bool(re.fullmatch(r"\.claude|claude~\d+", low)) or (
+                    is_glob and fnmatch.fnmatchcase(".claude", low))
+        return False
+
+
+_GLOB_CFG = _GlobCfg()
+
+
+def config_grant_open(S):
+    """True while the session holds a /allow-config window that has not expired."""
+    try:
+        return dt.datetime.fromisoformat(S["cfg_exp"]) > dt.datetime.now().astimezone()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def config_gate(H, path=None, what=None):
+    """Deny a config change unless the MAIN session holds an open /allow-config window. `path` (an Edit tool) or `what`
+    (a short label of the shell command, never its text) says what was touched. The deny is decided from the state
+    cache before any lock; the lock is only taken to log an allowed change."""
+    S = cached_state(H)
+    actor, _aid, _label = _actor_of(H, S or {})
+    target = {"path": str(path)[:MAX_STR]} if path else {"what": str(what)[:60]}
+    not_in_ledger = False
+    if actor == "main" and S is not None and config_grant_open(S):
+        if not ledger_grant_ok(H, "config"):              # the cache says yes, the ledger does not: the cache is not trusted
+            not_in_ledger = True
+        else:
+            try:
+                with Txn(H, tries=CONFIG_LOCK_TRIES, strict=True, light=True) as tx:
+                    if config_grant_open(tx.state):
+                        tx.nosave = True             # an allowed change changes nothing in state: never write the cache here
+                        tx.emit(dict({"ev": "config_allowed", "tool": H.tool}, **target))
+                        return None
+            except BaseException:  # noqa: BLE001 - lock busy or log unwritable: deny
+                log_error()
+    try:
+        with Txn(H, tries=CONFIG_LOG_TRIES, light=True) as tx:
+            tx.nosave = True
+            if not_in_ledger:
+                tx.emit({"ev": "ignored", "what": "grant not in ledger"})
+            tx.emit(dict({"ev": "refusal", "task": tx.state.get("task"), "guard": "config", "would": False,
+                          "actor": actor, "tool": H.tool, "detail": CONFIG_DENY}, **target))
+    except BaseException:  # noqa: BLE001
+        log_error()
+    return deny(CONFIG_DENY)
+
+
+def _runs_installer(norm):
+    """The segment RUNS tools/install_skills.py or install_hooks.py (directly or through an interpreter or wrapper);
+    naming them in `git add`, `grep` or a test path does not count."""
+    if "install_" not in norm.lower():
+        return False
+    head, _rest = _head_of(norm.split())
+    if head in _INSTALLERS:
+        return True
+    if head in _RUNNERS:
+        return any(os.path.basename(t.replace("\\", "/")).lower() in _INSTALLERS for t in _TOKEN_SPLIT_RE.split(norm))
+    return False
+
+
+def _config_adjust(norm):
+    """'read' for a segment `_segment_effect` calls unclear but that cannot write: printing, a non-writing git
+    subcommand, `sed -n` with a plain print script. None otherwise (the segment stays gated)."""
+    if re.search(r"`|\$\(|\$\{", norm):
+        return None
+    head, rest = _head_of(norm.split())
+    if head in _PRINT_TOOLS:
+        return "read"
+    if head == "git":
+        if _out_flag("git", rest, lambda s: False) or any(a.startswith(_GIT_RUNS_PROGRAM) for a in rest):
+            return None
+        skip = False
+        for a in rest:
+            if skip:
+                skip = False
+            elif a in ("-C", "-c"):
+                skip = True
+            elif not a.startswith("-"):
+                return "read" if a.lower() in _GIT_NO_WRITE else None
+        return None
+    if head in ("du", "realpath", "readlink"):
+        return "read"
+    if head == "sed":
+        flags = [a for a in rest if a.startswith("-")]
+        args = [a for a in rest if not a.startswith("-")]
+        if (any(re.fullmatch(r"-[A-Za-z]*n[A-Za-z]*", f) for f in flags)
+                and not any(f.startswith("--") or re.match(r"-[A-Za-z]*[ifseE]", f) for f in flags)
+                and args and _SED_PRINT_RE.fullmatch(args[0])):
+            return "read"
+    return None
+
+
+def _config_name(tok):
+    """True when a path token names a config FILE by its last component (CLAUDE.md, SKILL.md, settings*.json, ...)."""
+    base = re.split(r"[\\/]+", tok.rstrip("\\/"))[-1].lower().split(":")[0]
+    return (base in CONFIG_BASENAMES or bool(_SETTINGS_RE.fullmatch(base)) or bool(_SHORT_NAME_RE.fullmatch(base)))
+
+
+def _folder_like(dest):
+    """A copy or move destination that is probably a folder: a trailing separator, `.`, `..`, or a last component
+    without an extension."""
+    if not dest:
+        return False
+    if dest[-1] in "\\/":
+        return True
+    base = re.split(r"[\\/]+", dest)[-1]
+    return base in (".", "..", "~") or not os.path.splitext(base)[1]
+
+
+def _config_copy_into(norm):
+    """A copy / move / link whose SOURCE is a config-named file and whose destination is a folder-like path: the
+    config file lands under its own name wherever the folder is. 'read' only when the destination is a file name."""
+    head, rest = _head_of(norm.split())
+    if head not in _COPY_TOOLS and head not in _MOVE_TOOLS:
+        return None
+    args = [a for a in rest if not a.startswith("-") and not re.fullmatch(r"/[A-Za-z?]{1,8}(?::\S*)?", a)]
+    dest = _copy_dest(head, rest, args)
+    if any(_config_name(a) for a in args if a != dest) and _folder_like(dest):
+        return "config-file-copy"
+    return None
+
+
+def _config_scan(H, text, cwd_cfg):
+    """A short label when the command changes (or may change) a config path, else None."""
+    low = _normalise(text).lower()
+    if not cwd_cfg and not any(k in low for k in CONFIG_HINTS):
+        return None
+    pre = re.sub(r"\d?>&\d?-?", " ", text).replace(">|", ">")
+    segs = [(seg, _normalise(seg)) for seg in SEGMENT_SPLIT_RE.split(pre)]
+    segs = [(seg, norm) for seg, norm in segs if norm.strip()]
+    cache = {}
+
+    def eff(i):
+        if i not in cache:
+            seg, norm = segs[i]
+            r = _segment_effect(seg, CONFIG_PATS)
+            if r == "unclear":
+                r = _config_adjust(norm) or r
+            cache[i] = r
+        return cache[i]
+
+    cache_cwd = {}
+
+    def eff_cwd(i):
+        """The effect of a segment run INSIDE a config folder: every path counts as protected."""
+        if i not in cache_cwd:
+            seg, norm = segs[i]
+            r = _segment_effect(seg, _EVERYTHING)
+            if r == "unclear":
+                r = _config_adjust(norm) or r
+            cache_cwd[i] = r
+        return cache_cwd[i]
+
+    cache_glob = {}
+
+    def eff_glob(i):
+        """The effect of a segment when only glob / escaped .claude tokens count as protected."""
+        if i not in cache_glob:
+            seg, norm = segs[i]
+            r = _segment_effect(seg, [_GLOB_CFG])
+            if r == "unclear":
+                r = _config_adjust(norm) or r
+            cache_glob[i] = r
+        return cache_glob[i]
+
+    cd_label = None
+    seen = None                                  # the first config label of an earlier segment
+    for i, (_seg, norm) in enumerate(segs):
+        if _runs_installer(norm):
+            return "install-tool"
+        if _GLOB_CFG.search(norm) and eff_glob(i) != "read":
+            return "glob-path"                   # ~/.claude/CLAUDE.m?  ~/.claude/sk?lls/x  ~/.claude/CLAUDE\.md
+        head, _rest = _head_of(norm.split())
+        if seen and head in _LATER_RUNNERS:
+            return seen                          # a path in one segment, run by a shell/xargs/loop in a later one
+        copy_label = _config_copy_into(norm)
+        if copy_label:
+            return copy_label
+        label = next((lb for lb, rx in CONFIG_SHELL_RES if rx.search(norm)), None)
+        if not label:
+            continue
+        seen = seen or label
+        if head in _CD_TOOLS:
+            cd_label = label                     # moving into a config folder is fine on its own; what runs next decides
+        elif eff(i) != "read":
+            return label
+    if cwd_cfg or cd_label:
+        for i, (_seg, norm) in enumerate(segs):
+            head, _rest = _head_of(norm.split())
+            if head in _CD_TOOLS:
+                continue
+            # the working folder is a config folder: a redirect to a relative file writes into it
+            writes = any(m.group(1).lower() not in ("/dev/null", "nul", "$null") for m in _REDIRECT_RE.finditer(norm))
+            if eff_cwd(i) != "read" or writes:
+                return "cwd" if cwd_cfg else cd_label
+    return None
+
+
+def config_shell(H, cmd):
+    """A short label (never the command) when a Bash/PowerShell command changes a config path or runs an installer
+    that writes into ~/.claude; None when it is fine. Over PUBLISH_MAX_CHARS characters the command is refused outright
+    (fail closed)."""
+    if len(cmd) > PUBLISH_MAX_CHARS:
+        return "oversized command"
+    cwd_cfg = bool(H.cwd) and bool(CONFIG_CWD_RE.search(_normalise(H.cwd)))
+    for base in [cmd] + ([cmd.replace("`", "")] if "`" in cmd else []):
+        # the text as written, then (when it holds `..`) collapsed and resolved against the working folder
+        for text in [base] + _dot_variants(base, H.cwd or "")[1:]:
+            r = _config_scan(H, text, cwd_cfg)
+            if r:
+                return r
+    return None
 
 
 def h_pre_bash(H):
@@ -2106,21 +3097,49 @@ def h_pre_bash(H):
             log_error()
         return deny(BYPASS_DENY)
     try:
+        cfg_what = config_shell(H, cmd)
+    except BaseException:  # noqa: BLE001 - a bug in the matcher must not open the door
+        log_error()
+        cfg_what = "unreadable command"
+    if cfg_what:
+        denied = config_gate(H, what=cfg_what)          # deny only: an open grant does not skip the checks below
+        if denied:
+            return denied
+    try:
         whats = publish_families(H, cmd)
     except BaseException:  # noqa: BLE001 - a bug in the matcher must not open the door
         log_error()
         whats = ["unreadable command"]
     if whats:
-        return publish_gate(H, whats)
+        denied = publish_gate(H, whats)                 # deny only: an open allowance does not skip the checks below
+        if denied:
+            return denied
     team = TEAM_RE.match(cmd.split("\n", 1)[0]) if ":" in cmd[:8] else None
-    forged = forged_grant(cmd) if "claude" in cmd.lower() else False
-    if not team and not forged:
+    forged = launch = None
+    check_failed = False
+    try:
+        forged = forged_grant_name(cmd)
+        launch = None if forged else claude_shell_launch(cmd)
+    except BaseException:  # noqa: BLE001 - a bug in the matcher must not open the door
+        check_failed = True
+    if check_failed:
+        try:
+            log_error()
+        except BaseException:  # noqa: BLE001
+            pass
+        if "claude" in cmd.lower():             # fail closed on anything that names claude; the deny never depends on the log
+            return deny(CLAUDE_LAUNCH_DENY)
+    if not team and not forged and not launch:
         return None
-    if forged:
-        with Txn(H) as tx:
-            tx.emit({"ev": "ignored", "what": "forged grant command"})
-        return deny("Only the operator can grant rework rounds, by typing /grant-rework. "
-                    "This command was refused.")
+    if forged or launch:
+        try:
+            with Txn(H) as tx:
+                tx.emit({"ev": "ignored", "what": "forged grant command"})
+        except BaseException:  # noqa: BLE001 - the deny never depends on the log being writable
+            log_error()
+        if forged:
+            return deny("Only the operator can run " + forged + ", by typing it. This command was refused.")
+        return deny(CLAUDE_LAUNCH_DENY)
     kind, rest = team.group(1).lower(), team.group(2)
     auto_ref = None
     if kind == "type" and not H.agent_id:       # HTTP read, before the lock, only when a bare declaration may open
@@ -2233,8 +3252,8 @@ def h_pre_forward(H):
     if any(USER_ONLY_RE.match(t) for t in _forward_texts(H.ti)):
         with Txn(H) as tx:
             tx.emit({"ev": "ignored", "what": ("forged user-only command via " + H.tool)[:60]})
-        return deny("/ack-break, /grant-rework and /allow-publish are typed by the operator only; this scheduled "
-                    "prompt or message was refused.")
+        return deny("/ack-break, /grant-rework, /allow-publish and /allow-config are typed by the operator only; "
+                    "this scheduled prompt or message was refused.")
     if H.tool == "SendMessage" and not H.agent_id:
         try:
             to = H.ti.get("to")
@@ -2263,6 +3282,11 @@ def h_pre_skill(H):
         with Txn(H) as tx:
             tx.emit({"ev": "ignored", "what": "model invoked allow-publish skill"})
         return deny("allow-publish is user-only: only the operator can allow a publish, by typing /allow-publish.")
+    if name == "allow-config":
+        with Txn(H) as tx:
+            tx.emit({"ev": "ignored", "what": "model invoked allow-config skill"})
+        return deny("allow-config is user-only: only the operator can allow a change to instructions, skills or "
+                    "settings, by typing /allow-config.")
     if name and name in H.playbook_names():
         auto_ref = None if H.agent_id else auto_plan_ref(H, H.area_for(None, name))   # HTTP read, before the lock
         with Txn(H) as tx:
@@ -2337,6 +3361,13 @@ def h_pre_edit(H):
         with Txn(H) as tx:
             tx.emit({"ev": "ignored", "what": "write to protected path"})
         return deny("The ledger and the Atlas hooks folder can't be edited by a session.")
+    try:
+        is_cfg = H.is_config(path)
+    except Exception:  # noqa: BLE001 - a bug in the matcher must not open the door
+        log_error()
+        is_cfg = True
+    if is_cfg:
+        return config_gate(H, path=path)
     if H.is_exempt(path):
         return None
     with Txn(H) as tx:
@@ -2403,7 +3434,11 @@ def h_post_edit(H):
     refresh_json_copies(H, path)
     base = os.path.basename(path).lower()
     check = run_check(path) if base in CHECK_FILES else None
-    exempt = H.is_protected(path) or H.is_exempt(path)
+    try:
+        is_cfg = H.is_config(path)
+    except Exception:  # noqa: BLE001
+        is_cfg = True
+    exempt = H.is_protected(path) or is_cfg or H.is_exempt(path)      # a config change is gated, not an `edit`
     if exempt and check is None:
         return None
     out = None

@@ -404,7 +404,7 @@ def test_any_activity_after_a_stop_reads_working_again():
     for e in (ev("12:25:00", "PreToolUse", tool="Bash"), ev("12:25:00", "WorkType", type="coding"),
               _start("12:25:00", "z", "scout"), ev("12:25:00", "PostToolUse", tool="Bash")):
         assert lane(build(base + [e]))["status"] == "working", e["ev"]
-    inner = ev("12:25:00", "PreToolUse", tool="Bash", in_agent="z")         # a helper's own tool use is not the Chief's
+    inner = ev("12:25:00", "PreToolUse", tool="Bash", in_agent="z")         # a helper's own tool use is not the orchestrator's
     assert lane(build(base + [inner]))["status"] == "idle"
 
 
@@ -537,6 +537,31 @@ def test_team_done_without_opener_or_from_a_helper_is_ignored():
            ev("12:05:00", "TeamDone", in_agent="a1"), ev("12:10:00", "Stop")]
     s = lane(build(evs))
     assert (s["done"], s["waiting"]) == (False, True)
+
+
+def test_a_new_prompt_after_team_done_makes_the_session_not_done():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
+           prompt("12:08:00"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["done"], s["waiting"]) == (False, True)
+    s = lane(build(evs[:5]))                                   # the new prompt is still being worked on
+    assert (s["status"], s["done"], s["waiting"]) == ("working", False, False)
+
+
+def test_a_second_team_done_after_the_new_prompt_is_done_again():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
+           prompt("12:08:00"), ev("12:09:00", "TeamDone"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["done"], s["waiting"]) == (True, False)
+
+
+def test_a_helper_prompt_or_a_helper_team_done_does_not_change_done():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"),
+           ev("12:06:00", "UserPromptSubmit", in_agent="a1", agent_id="a1"), ev("12:10:00", "Stop")]
+    assert lane(build(evs))["done"] is True
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), prompt("12:06:00"),
+           ev("12:07:00", "TeamDone", in_agent="a1"), ev("12:10:00", "Stop")]
+    assert lane(build(evs))["done"] is False
 
 
 def test_done_keeps_status_working():

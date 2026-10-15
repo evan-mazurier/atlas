@@ -6,7 +6,9 @@ import {
 } from "./plan-core.js";
 
 const ROW_H = 44;          // one row of the calendar in the day view
-const WEEK_H = 660;        // 15 h x 44 px: a one-hour block fits the time line plus a whole title line
+const WEEK_H = 660;        // 15 h x 44 px: a one-hour block fits the time line plus a whole title line (the minimum)
+let weekH = WEEK_H;        // the week grows to fill the window's height; kept across repaints so a poll does not flicker
+let weekEls = null;        // {gut, surf} of the week view on screen, for the window resize listener
 const HOURS = (AXIS_MAX - AXIS_MIN) / 60;
 
 function mk(tag, cls, text, parent) {
@@ -112,6 +114,7 @@ function makeBlock(P, parent, b, orient, opts) {
   b.span = opts.span || 1;
   b.label = labelFor(P, b, orient);
   if (b.end - b.start <= 30) el.classList.add("tiny");
+  if (b.end - b.start < 30) el.classList.add("short");     // under half an hour: smaller text, thinner resize edges
   if (b.ev && b.ev.done) el.classList.add("done");
   if (tagOnly(P, b, orient)) el.classList.add("third");   // the area tag only, time and title in the tooltip
   fillBlock(el, b);
@@ -214,7 +217,7 @@ function dayView(P, body) {
     const l1 = mk("div", "now", null, mid); l1.style.left = (nf.frac * 100).toFixed(2) + "%";
     const l2 = mk("div", "nowl", nf.text, mid); l2.style.left = (nf.frac * 100).toFixed(2) + "%";
   }
-  // keep the surface element for hit-testing (tray drops) and wire the drags
+  // keep the surface element for hit-testing (memo drops) and wire the drags
   S.surface = { el: lane, orient: "h", cols: 1, days: [day], colEls: [lane] };
   wireSurface(P, S.surface);
   watchFit(body, body);
@@ -322,13 +325,13 @@ function weekView(P, body) {
 
   const main = mk("div", "plan-wk-row plan-wk-main", null, wk);
   const gut = mk("div", "plan-wk-gut", null, main);
-  gut.style.height = WEEK_H + "px";
+  gut.style.height = weekH + "px";
   for (let h = AXIS_MIN / 60; h < AXIS_MAX / 60; h++) {
     const s = mk("span", null, (h < 10 ? "0" : "") + h, gut);
     s.style.top = (minToFrac(h * 60) * 100).toFixed(3) + "%";
   }
   const surf = mk("div", "plan-wk-body plan-surface", null, main);
-  surf.style.height = WEEK_H + "px";
+  surf.style.height = weekH + "px";
   const colEls = days.map((d) => {
     const c = mk("div", "plan-col" + (d === today ? " today" : ""), null, surf);
     c.dataset.day = d;
@@ -348,9 +351,29 @@ function weekView(P, body) {
   S.surface = { el: surf, orient: "v", cols: 7, days, colEls };
   wireSurface(P, S.surface);
   watchFit(wk, surf);
+  weekEls = { gut, surf };
+  requestAnimationFrame(fitWeekHeight);
 }
 
-/* ---------- hit testing, shared with the review tray ---------- */
+/** Grow the week to the window's height (never below WEEK_H), so the card ends just above the bottom of the screen. */
+function fitWeekHeight() {
+  if (!weekEls || !weekEls.surf.isConnected) { weekEls = null; return; }
+  const { gut, surf } = weekEls;
+  const scr = document.getElementById("screen");
+  const card = surf.closest(".card");
+  if (!scr || !card) return;
+  const sr = surf.getBoundingClientRect();
+  const top = sr.top - scr.getBoundingClientRect().top + scr.scrollTop;      // from the top of the scrolled screen
+  const below = card.getBoundingClientRect().bottom - sr.bottom;             // the card's legend and padding under the grid
+  const pad = parseFloat(getComputedStyle(scr).paddingBottom) || 0;           // the screen's own bottom padding: no scroll bar
+  const h = Math.max(WEEK_H, Math.floor(scr.clientHeight - top - below - pad - 1));
+  if (h === weekH && surf.style.height === h + "px") return;
+  weekH = h;
+  gut.style.height = surf.style.height = h + "px";
+}
+window.addEventListener("resize", () => requestAnimationFrame(fitWeekHeight));
+
+/* ---------- hit testing, shared with the memo rail ---------- */
 export function surfaceRect(P) {
   const s = P.S.surface;
   if (!s) return null;

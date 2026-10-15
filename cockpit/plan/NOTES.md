@@ -49,7 +49,7 @@ Files: `store.py` (paths, locks, atomic write, section splice), `versions.py` (p
 * `review/schedule` on an already-scheduled review moves the same event. `review/done` is idempotent.
 * A write never creates `schedule.yaml` / `tasks.yaml` (503 `no plan file`).
 
-## For the Chief
+## For the orchestrator
 * The OS lock creates `schedule.yaml.lock`, `tasks.yaml.lock` (next to the data files) and
   `plan-version.json.lock`. `*.lock` is not in `.gitignore` (not my file): add it before the repo's own
   schedule.yaml/tasks.yaml are ever written by v2.

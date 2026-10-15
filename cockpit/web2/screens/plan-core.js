@@ -213,15 +213,7 @@ export function restoreEvents(events, id, saved) { return events.filter((e) => e
 export function entriesOf(events, id) { return events.filter((e) => e.id === id); }
 
 /* ---------- tasks ---------- */
-export const STATES = ["todo", "next", "doing", "review", "done"];
-export const STATE_LABELS = { todo: "To do", next: "Next", doing: "Doing", review: "Pending review", done: "Done" };
-
-export function groupTasks(list) {
-  const out = {};
-  STATES.forEach((s) => { out[s] = []; });
-  (list || []).forEach((t) => { (out[t.state] || out.todo).push(t); });
-  return out;
-}
+export const DEFAULT_MEMO_MIN = 60;      // a memo without an estimate takes an hour in the calendar
 export function setTaskState(tasks, id, state) {
   const out = {};
   Object.keys(tasks).forEach((a) => { out[a] = tasks[a].map((t) => (t.id === id ? Object.assign({}, t, { state }) : t)); });
@@ -249,12 +241,6 @@ export function fmtEstimate(min) {
   const h = Math.floor(min / 60), m = min % 60;
   return m ? h + " h " + m : h + " h";
 }
-
-/* ---------- review tray ---------- */
-/** Length (minutes) a review block takes, rounded up to the snap grid. */
-export function reviewLen(item) { return Math.max(SNAP, Math.ceil((item && item.review_min ? item.review_min : 20) / SNAP) * SNAP); }
-export function markScheduled(tray, id, sched) { return tray.map((t) => (t.id === id ? Object.assign({}, t, { scheduled: sched }) : t)); }
-export function removeTray(tray, id) { return tray.filter((t) => t.id !== id); }
 
 /** Everything that sits in the calendar on a day, as blocks. Events first, then read-only placements. */
 export function mineBlocks(data, day) {
@@ -289,11 +275,6 @@ export function recurText(r) {
 }
 
 /* ---------- tasks: planning, grouping ---------- */
-/** "planned Mon 10:00" for a card, "" when not planned. */
-export function plannedLabel(p) {
-  if (!p || !p.day || !p.start || !parseDay(p.day)) return "";
-  return "planned " + dowOf(p.day) + " " + p.start;
-}
 /** The title of an all-day event on `day` (not counting the event `exceptId`), or "". */
 export function allDayTitleOn(events, day, exceptId) {
   const e = (events || []).find((x) => x.day === day && !x.start && x.id !== exceptId);
@@ -301,24 +282,46 @@ export function allDayTitleOn(events, day, exceptId) {
 }
 /** Colour token for an area id. An id that is not a known area (removed, null) gets the neutral Unassigned colour, like app.js areaColor. */
 export function areaVar(areas, id) { return id && (areas || []).some((a) => a.id === id) ? "var(--a-" + id + ")" : "var(--ctx-2)"; }
-/** Tasks whose area key is not a known area (a removed area): one flat list, each task carrying its old area id. Shown as Unassigned. */
-export function unassignedTasks(tasks, areas) {
-  const known = new Set((areas || []).map((a) => a.id));
-  const out = [];
-  Object.keys(tasks || {}).forEach((k) => {
-    if (known.has(k)) return;
-    (tasks[k] || []).forEach((t) => out.push(Object.assign({ area: k }, t)));
-  });
-  return out;
+
+/* ---------- the "To schedule" memo rail ---------- */
+/** "30m", "1h", "1h30": the short estimate on a memo row. */
+export function fmtMemoEst(min) {
+  if (min == null || !(min > 0)) return "";
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? h + "h" + (m ? String(m).padStart(2, "0") : "") : m + "m";
 }
-/** "By state": five columns, every visible area's tasks in area order, then Unassigned tasks (never hidden). areas = [{id}], hidden = {areaId: true}. */
-export function tasksByState(tasks, areas, hidden) {
-  const out = {};
-  STATES.forEach((s) => { out[s] = []; });
-  areas.forEach((a) => {
-    if (hidden && hidden[a.id]) return;
-    (tasks[a.id] || []).forEach((t) => { (out[t.state] || out.todo).push(Object.assign({ area: a.id }, t)); });
+/** Minutes a memo takes when dropped on the calendar: its estimate, one hour when it has none. */
+export function memoLen(t) { return t && t.estimate_min > 0 ? t.estimate_min : DEFAULT_MEMO_MIN; }
+/** "planned Mon 12 10:00" on a scheduled memo, "" when the memo is open. */
+export function memoPlannedLabel(p) {
+  if (!p || !p.day || !p.start || !parseDay(p.day)) return "";
+  return "planned " + dowOf(p.day) + " " + parseDay(p.day).getDate() + " " + p.start;
+}
+/** True when the memo sits in the calendar (a linked event of mine). */
+export function isScheduledMemo(t) { return !!(t && t.planned && t.planned.on === "me"); }
+/** The rail's list: tasks.yaml tasks that are not done and whose linked event is not done, each carrying its area id.
+    Open memos first, then scheduled ones, each group in payload order. tasks = {areaId: [task]}. */
+export function memoList(tasks) {
+  const open = [], sched = [];
+  Object.keys(tasks || {}).forEach((area) => {
+    (tasks[area] || []).forEach((t) => {
+      if (t.source !== "tasks.yaml" || t.state === "done") return;
+      if (isScheduledMemo(t) && t.planned.done) return;
+      (isScheduledMemo(t) ? sched : open).push(Object.assign({ area }, t));
+    });
   });
-  unassignedTasks(tasks, areas).forEach((t) => { (out[t.state] || out.todo).push(t); });
+  return open.concat(sched);
+}
+/** Set (or clear, with null) the `planned` slot of one task. */
+export function setPlanned(tasks, id, planned) {
+  const out = {};
+  Object.keys(tasks).forEach((a) => {
+    out[a] = tasks[a].map((t) => {
+      if (t.id !== id) return t;
+      const n = Object.assign({}, t);
+      if (planned) n.planned = planned; else delete n.planned;
+      return n;
+    });
+  });
   return out;
 }

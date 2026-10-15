@@ -153,6 +153,19 @@ def test_place_me_creates_a_linked_event_and_sets_planned(api, env):
     assert len([e for e in stored(env, "events") if e.get("task_of") == t["id"]]) == 1
 
 
+def test_planned_carries_done_once_the_linked_event_is_done(api):
+    t = add_task(api)
+    code, out = place(api, t["id"], "me")
+    assert code == 200, out
+    row = lambda: [r for r in api.get(**{"from": DAY, "to": DAY})[1]["tasks"]["md"] if r["id"] == t["id"]][0]
+    assert "done" not in row()["planned"]
+    code, _ = api.post("event/done", {"base": api.version(), "id": out["changed"]["id"], "done": True})
+    assert code == 200
+    assert row()["planned"] == {"day": DAY, "start": "10:00", "end": "11:30", "on": "me", "done": True}
+    code, _ = api.post("event/done", {"base": api.version(), "id": out["changed"]["id"], "done": False})
+    assert "done" not in row()["planned"]
+
+
 def test_place_me_refusals_are_visible_reasons(api):
     t = add_task(api)
     assert place(api, t["id"], "me", start="06:00", end="07:30")[0] == 400

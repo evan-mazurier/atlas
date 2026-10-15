@@ -1,12 +1,14 @@
-/* Dev aid: `#/plan?sample=1` lays a few finished reviews over the real payload when it has none,
-   so the review tray can be checked before the ledger has such runs. Nothing here is saved. */
+/* Dev aid: `#/plan?sample=1` lays a few memos (one open, one scheduled) over the real payload when it has no
+   tasks.yaml task, so the To schedule rail can be checked on an empty plan. Nothing here is saved. */
 export function sampleOverlay(d, today) {
-  const out = Object.assign({}, d);
-  if (!(d.review_tray || []).length) {
-    out.review_tray = [
-      { id: "rv_s1", task_id: "s1", title: "Build Product page", area: "md", review_min: 25, sample: true, verdict: "READY", ready_at: today + "T11:36:00", scheduled: null },
-      { id: "rv_s9", task_id: "s9", title: "Notes batch 2", area: "job", review_min: 15, sample: true, verdict: "READY", ready_at: today + "T09:00:00", scheduled: null },
-    ];
-  }
+  const tasks = d.tasks || {};
+  if (Object.keys(tasks).some((a) => (tasks[a] || []).some((t) => t.source === "tasks.yaml"))) return d;
+  const area = (d.areas && d.areas[0] && d.areas[0].id) || "md";
+  const out = Object.assign({}, d, { tasks: Object.assign({}, tasks) });
+  out.tasks[area] = (tasks[area] || []).concat([
+    { id: "s_memo1", title: "Sample: outline the follow-up", state: "todo", owner: "me", source: "tasks.yaml", project: null, estimate_min: 90, reversible: true, sample: true },
+    { id: "s_memo2", title: "Sample: already scheduled", state: "todo", owner: "me", source: "tasks.yaml", project: null, estimate_min: 30, reversible: true, sample: true,
+      planned: { day: today, start: "15:00", end: "15:30", on: "me" } },
+  ]);
   return out;
 }

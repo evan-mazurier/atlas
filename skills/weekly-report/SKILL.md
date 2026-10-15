@@ -4,7 +4,7 @@ description: Weekly report from the Atlas ledger. Runs the numbers, then writes 
 argument-hint: "[YYYY-Www]"
 ---
 
-You are the Chief. Produce the weekly report for the week in `$ARGUMENTS` (the current ISO week if empty).
+You are the orchestrator. Produce the weekly report for the week in `$ARGUMENTS` (the current ISO week if empty).
 This is a playbook (area atlas): no `: team-type` declaration is needed.
 
 1. Run the numbers (read-only on the ledger):
@@ -16,7 +16,7 @@ This is a playbook (area atlas): no `: team-type` declaration is needed.
    those lines. Never touch the block between `<!-- numbers:start -->` and `<!-- numbers:end -->`; re-running
    the script refreshes that block and keeps your text.
    - **Lessons: three observations.** Each one a plain sentence plus the number that shows it. Prefer the
-     waste signals (Chief doing helper-sized work, undeclared tasks, reruns, cache reuse), first-pass READY,
+     waste signals (the orchestrator doing helper-sized work, undeclared tasks, reruns, cache reuse), first-pass READY,
      what the gates caught, and budget refusals (enforced vs would).
    - **Three changes.** Concrete and small: a prompt edit, a skill edit, or a routing change (which type or
      model takes which work). Each names the file or setting to change and the number it should move.

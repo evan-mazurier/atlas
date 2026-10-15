@@ -64,7 +64,7 @@ types:
     move: "Declare a type"
 aliases: {legal-money: legal, money: legal, quick: quick-question, question: quick-question}
 # Slash commands that open a playbook task (besides those listed under an area in areas.yaml).
-playbooks: [daily-review, tune-up, weekly-report, launch-auto]
+playbooks: [daily-review, tune-up, weekly-report, atlas-check, launch-auto]
 # Per-playbook crew and rework budget, read off each playbook's own skill text (not invented).
 # `budget` is omitted when the skill states none (the playbook then inherits types.playbook.budget).
 # `per_task: true` = the playbook starts other work and the crew is that task's type (types above);
@@ -76,6 +76,9 @@ playbook_crews:
   tune-up:
     crew: [sweeper, drafter, implementer, reviewer, senior-reviewer]
   weekly-report:
+    crew: []
+    budget: null            # no helpers, so nothing to rework
+  atlas-check:
     crew: []
     budget: null            # no helpers, so nothing to rework
   launch-auto:

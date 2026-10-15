@@ -25,7 +25,8 @@ import sys
 
 LOG_DIR = os.path.join(os.path.expanduser("~"), ".claude", "team-live")
 TYPE_RE = re.compile(r"^\s*:\s*team-type\s+([a-z][a-z0-9-]{0,30})(?:\s+([a-z][a-z0-9-]{0,15}))?(?:\s+task:(\S+))?\s*$", re.I)
-DONE_RE = re.compile(r"^\s*:\s*team-done\s*$", re.I)
+# like the Atlas hook (TEAM_RE): the FIRST line of the command, `: team-done` then a word boundary, anything may follow
+DONE_RE = re.compile(r"^\s*:\s*team-done\b", re.I)
 PLAN_REF_RE = re.compile(r"^(?:evt_[0-9a-f]{8}(?:@\d{4}-\d\d-\d\d)?|t_[0-9a-f]{8}|[A-Za-z0-9][A-Za-z0-9._-]{0,40}/[A-Za-z0-9][A-Za-z0-9._-]{0,60})$")
 
 
@@ -87,7 +88,7 @@ def main() -> None:
     elif ev == "PreToolUse" and tool in ("Bash", "PowerShell"):
         cmd = ti.get("command") or ""
         m = TYPE_RE.match(cmd) if len(cmd) <= 200 else None
-        done = bool(DONE_RE.match(cmd)) if len(cmd) <= 200 else False
+        done = bool(DONE_RE.match(cmd.split("\n", 1)[0][:200]))
         if (not m and not done) or d.get("agent_id"):
             return                                     # ordinary commands, and declarations from a helper, are never logged
         if done:

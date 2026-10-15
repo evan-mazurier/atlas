@@ -2,10 +2,10 @@
 
 > The shapes every lane builds against. Written in Wave 0 (2026-10-09) from the approved scope
 > and the research notes.
-> A lane that needs a shape not written here stops and asks the Chief; it does not invent one.
-> Changing a contract after Wave 1 starts = a Chief decision recorded in the build log.
+> A lane that needs a shape not written here stops and asks the orchestrator; it does not invent one.
+> Changing a contract after Wave 1 starts = an orchestrator decision recorded in the build log.
 
-Conventions: Python 3.12 (`py -3.12`), stdlib + `pyyaml` only (no new dependency without the Chief).
+Conventions: Python 3.12 (`py -3.12`), stdlib + `pyyaml` only (no new dependency without the orchestrator).
 Paths below are relative to the repo root unless absolute. Python module names are as imported by
 the server, which puts `cockpit/` and `dashboard/` on `sys.path` (so `import ledger2.query`,
 `import plan.api`, `import teamlive`, `import usage`). Times are local ISO-8601 with seconds and
@@ -18,11 +18,11 @@ offset (`2026-10-09T14:20:05+02:00`). Every JSON API answers `{"ok": true, ...}`
 
 | Owner | Files (create or change) |
 | --- | --- |
-| **Chief, Wave 0** | `docs/v2/*`, `areas.yaml`, `workflows.yaml`, `registry.yaml` (monitor off), the seam in `cockpit/server.py`, the stub files listed in §9, `.claude/launch.json` |
+| **Orchestrator, Wave 0** | `docs/v2/*`, `areas.yaml`, `workflows.yaml`, `registry.yaml` (monitor off), the seam in `cockpit/server.py`, the stub files listed in §9, `.claude/launch.json` |
 | **W1 Lane 1, the record** | `hooks/` (all), `cockpit/ledger2/` (all), `tools/install_hooks.py`, `tools/hooks_mode.py`, `tools/import_v1_ledger.py`, `~/.claude/skills/grant-rework/SKILL.md` (written by the installer at Join 1, source in `hooks/skills/`), the one-line `TYPE_RE` widening in `~\.claude\hooks\team_events.py` (source copy in `hooks/team_events.py`, installed at Join 1) |
 | **W1 Lane 2, shell** | `cockpit/web2/` (it also creates the placeholder `screens/plan.*`; its ownership passes to Wave 2 at Join 1); `cockpit/shell_api.py`; `cockpit/web2_static.py`; `tools/check_look.py`; additive fields in `cockpit/teamlive.py`; one added function in `dashboard/usage.py` (§5.1) |
 | **W1 Lane 3, Plan engine** | `cockpit/plan/` (all), `tasks.yaml` |
-| **W2 Lane 1, automatic sessions** | `tools/launch_session.py`, `hooks/` additions agreed with the Chief, `~/.claude/skills/weekly-report/` (source in `skills/weekly-report/`) |
+| **W2 Lane 1, automatic sessions** | `tools/launch_session.py`, `hooks/` additions agreed with the orchestrator, `~/.claude/skills/weekly-report/` (source in `skills/weekly-report/`) |
 | **W2 Lane 3, Plan screen** | `cockpit/web2/screens/plan.*` |
 
 Nobody edits `dashboard/*`, `cockpit/web/*` (v1 front end), `cockpit/state.py` or `schedule.yaml` by hand. v1 code is removed in the Wrap-up, not before.
@@ -131,7 +131,7 @@ anchor missing". With no event and no anchor file the panel says "Outside anchor
 holds the operator's GitHub login can remove the ruleset and then rewrite the remote; and anyone who can write the PC can stop the
 daily task (the staleness warning is the only signal).
 **Metadata only: never prompt text, never tool input text, never tool output text**, except the fields
-explicitly listed below (task labels ≤ 60 chars, the Chief's summary, paths of edited files).
+explicitly listed below (task labels ≤ 60 chars, the orchestrator's summary, paths of edited files).
 The denied command itself is NEVER stored, not even for `bypass_attempt` (decision 2026-10-10): the hook
 classifies it in memory and keeps only derived labels (`effect`, `target`). The one free-text field a
 `bypass_attempt` carries is `desc`, the agent's own stated intent (the Bash `description`), clipped to 160 chars
@@ -169,7 +169,7 @@ facts.
 | `prompt` | UserPromptSubmit | `cmd?` slash-command NAME only (no args, no text) |
 | `work_type` | PreToolUse Bash/PowerShell `: team-type <type> [<area>] [task:<id>]` | `type` (normalised via `workflows.yaml` aliases), `area` (§1.3), `task` (the new task id), `plan_ref?` (since 2026-10-10: the Plan item the session works on, see the task-opening rules), `plan_auto?` (`true` when `plan_ref` was inferred, see the automatic link) |
 | `playbook` | UserPromptExpansion / PreToolUse Skill for a playbook name | `cmd`, `area`, `task`, `plan_ref?` + `plan_auto?` (automatic link only), opens a task of type `playbook` |
-| `summary` | PreToolUse Bash/PowerShell `: team-summary '<json>'` | `task`, `goal`, `produced`, `decisions`, `open`, `review_min?` (int), each ≤ 200 chars; the Chief's 5 lines |
+| `summary` | PreToolUse Bash/PowerShell `: team-summary '<json>'` | `task`, `goal`, `produced`, `decisions`, `open`, `review_min?` (int), each ≤ 200 chars; the orchestrator's 5 lines |
 | `task_done` | PreToolUse `: team-done` when allowed | `task`, `version` |
 | `helper_start` | PreToolUse Agent | `tuid`, `helper` (subagent_type), `label` (description ≤ 60), `bg` (bool), `version` (task version at launch) |
 | `helper_paired` | SubagentStart (once per run: a resumed helper pairs again with `tuid: null`) | `agent_id`, `helper`, `tuid` (the pending `helper_start` it was paired with, §6.2; null for a resumed helper) |
@@ -181,13 +181,15 @@ facts.
 | `tamper` | any hook run that finds the installed config's mode ≠ the last `mode` event | `found`, `expected` |
 | `check` | PostToolUse Edit/Write on `areas.yaml` or `cockpit/web2/look.css` | `task`, `file`, `ok`, `problems` (list of ≤ 5 short strings), `version`, an `ok` check on a change touching ONLY those files counts as READY for the done-lock |
 | `edit` | PostToolUse Edit/Write/NotebookEdit (main or helper), non-exempt path (§6.5) | `task`, `path` (absolute), `tool`, `version` (after the bump) |
-| `refusal` | any guard that refuses (or would refuse in record mode) | `task`, `guard` ∈ `rework` `done_lock` `quick_question` `publish`, `would` (bool: true in record mode = logged, not enforced), `detail` (≤ 200 chars, the reason shown); since 2026-10-10, when the refusal is of a helper spawn (the Agent tool): `helper` (the refused `subagent_type`), `label` (the spawn's description ≤ 60) and `tuid` (the spawn's tool-use id, so a later `helper_paired` with the same `tuid` gives the helper's `agent_id`). Older events lack them. The top-level `agent_id` is the SPAWNER's, never the refused builder's. A `publish` refusal (§6.4b, since 2026-10-10) is never a would-refusal (`would: false` in every mode) and carries `what` (the first matched family, for example `git push`; never the command), `count` (how many publishes the command held) and `actor` (`main`, or the helper's type, with the helper's `agent_id` in the top-level field). |
+| `refusal` | any guard that refuses (or would refuse in record mode) | `task`, `guard` ∈ `rework` `done_lock` `quick_question` `publish` `config`, `would` (bool: true in record mode = logged, not enforced), `detail` (≤ 200 chars, the reason shown); since 2026-10-10, when the refusal is of a helper spawn (the Agent tool): `helper` (the refused `subagent_type`), `label` (the spawn's description ≤ 60) and `tuid` (the spawn's tool-use id, so a later `helper_paired` with the same `tuid` gives the helper's `agent_id`). Older events lack them. The top-level `agent_id` is the SPAWNER's, never the refused builder's. A `publish` refusal (§6.4b, since 2026-10-10) is never a would-refusal (`would: false` in every mode) and carries `what` (the first matched family, for example `git push`; never the command), `count` (how many publishes the command held) and `actor` (`main`, or the helper's type, with the helper's `agent_id` in the top-level field). A `config` refusal (§6.4c, since 2026-10-13) is likewise never a would-refusal (`would: false` in every mode), is NOT a rework refusal, and carries `path` (an Edit tool: the file path) or `what` (a shell command: a short label such as `claude-md` or `install-tool`, never the command), `tool`, and `actor`. |
 | `publish_grant` | UserPromptSubmit whose prompt starts with `/allow-publish [n]` (interactive entry, main session only; §6.4b) | `n` (1..5, default 1), `expires` (ISO, 30 minutes after the grant), `entry` |
 | `publish_allowed` | PreToolUse Bash/PowerShell: a publish command let through by a grant (§6.4b) | `what` (the matched family; never the command) |
+| `config_grant` | UserPromptSubmit whose prompt starts with `/allow-config` (interactive entry, main session only; §6.4c) | `expires` (ISO, 15 minutes after the grant), `entry` |
+| `config_allowed` | PreToolUse Edit/Write/NotebookEdit or Bash/PowerShell: a change to a config path let through by a grant (§6.4c) | `path` (Edit tools) or `what` (shell label; never the command), `tool` |
 | `integrity_ack` | UserPromptSubmit whose prompt starts with `/ack-break` (§6.4a) | `break` (the break id, §1), `by` (`operator`), `entry` |
 | `anchor_configured` | tools/anchor_ledger.py, once, on its first successful push to the outside anchor remote (§1 "Outside anchor") | `url` (the pinned remote); `sid` = `anchor-tool` |
 | `reminder` | PreToolUse Agent, main session, once per task (§6.3a) | `task`, `why` (`is over its rework budget` or `has been open a long time`) |
-| `sendback` | Stop when the done-lock would send the Chief back | `task`, `version`, `would` (bool) |
+| `sendback` | Stop when the done-lock would send the orchestrator back | `task`, `version`, `would` (bool) |
 | `rework_granted` | UserPromptSubmit (prompt starts with `/grant-rework`; interactive entry only) | `task`, `n` (int ≥ 1, default 1) |
 | `cost` | Stop and SessionEnd (§1.5) | `scope` (`main` or the helper's `agent_id`), `helper?`, `model`, `in`, `out`, `cache_read`, `cache_write`, `weighted` |
 | `mode` | `tools/hooks_mode.py` | `from`, `to` |
@@ -436,7 +438,7 @@ and the block of `screens/team.css` between `/* creatures: verbatim from v1 */` 
   secondary encoding), adjacent-pair normal-vision ΔE ≥ 15, contrast vs surface ≥ 3:1. Ported to
   Python with the validator's own constants; a test runs the vendored JS with node (when installed)
   on the same inputs and asserts the same verdicts. *(Amended 2026-10-09 at Lane 2's report: the
-  first wording, CIEDE2000 ΔE ≥ 10 on every pair, was the Chief's invention and failed the approved
+  first wording, CIEDE2000 ΔE ≥ 10 on every pair, was the orchestrator's invention and failed the approved
   palette; the approval was made with this validator.)*
 * `look.css`: only `:root` blocks; every token in the list above is present; every colour value is a
   valid hex; `--ink` on `--bg` ≥ 7:1 and `--muted` on `--bg` ≥ 4.5:1.
@@ -475,12 +477,12 @@ and served from a cache (ledger stats).
 | Method · path | Answer |
 | --- | --- |
 | `GET /api/v2/areas` | `{ok, areas: [{id, name, color, group}]}` from `areas.yaml` |
-| `GET /api/v2/attention` | `{ok, working: n, waiting: n, sessions: [{sid, title, area, status}], pending_reviews: n, team_error: string or null}`, sessions from `teamlive.snapshot()` (`status` ∈ `working` `waiting` `idle`; a session with a live helper is `working` even after its own turn ended, see "Live helpers" below), pending reviews from `plan.api.review_tray_count()` (import guarded: 0 if absent). **No `window` key:** the usage-window meter was removed 2026-10-10 (an estimate that never matched Claude's own meter; the real one is in the Claude desktop app), with its background refresher thread (`ATLAS_SHELL_NO_WINDOW_THREAD`), `shell_api.compute_window` and the v1 helpers `core/watcher.py` and `core/ledger.py` that fed it (`tools/import_v1_ledger.py` and the v1 data in `ledger/events.jsonl` are untouched) |
+| `GET /api/v2/attention` | `{ok, working: n, waiting: n, sessions: [{sid, title, area, status}], pending_reviews: n, team_error: string or null}`, sessions from `teamlive.snapshot()` (`status` ∈ `working` `waiting` `idle`; a session with a live helper is `working` even after its own turn ended, see "Live helpers" below), pending reviews from `plan.api.review_tray_count()` (import guarded: 0 if absent; *since 2026-10-15 the app bar no longer shows `pending_reviews`*, the key stays). **No `window` key:** the usage-window meter was removed 2026-10-10 (an estimate that never matched Claude's own meter; the real one is in the Claude desktop app), with its background refresher thread (`ATLAS_SHELL_NO_WINDOW_THREAD`), `shell_api.compute_window` and the v1 helpers `core/watcher.py` and `core/ledger.py` that fed it (`tools/import_v1_ledger.py` and the v1 data in `ledger/events.jsonl` are untouched) |
 | `GET /api/v2/team` | `teamlive.snapshot()` plus `area` per session (`area_for(areas, cwd)`); each session also carries `via_helpers` (bool) and `live_helpers` (`[{agent, name, label, bg}]`), see "Live helpers" below |
 | `GET /api/v2/shell/roster` | `{ok, helpers: [{id, model, use_for, never}], types: [{id, label, crew, budget, rung, move}], playbooks: [{command, area, crew, budget, per_task}]}`, read per request: helpers listed from the agent files (`ATLAS_AGENTS_DIR`, default `~/.claude/agents/*.md`, model from frontmatter); `use_for` and `never` verbatim from the `| Helper | Model | Use it for | Never |` table in the global instructions file (`ATLAS_TEAM_DOC`, default `~/.claude/CLAUDE.md`), falling back to the agent description / first Never line when the table is missing; a personal name in the table is rendered as "the operator", types and playbooks from `workflows.yaml` (`undeclared` skipped; `budget: null` = no rework; a playbook's `crew`/`budget` come from `playbook_crews`, budget falling back to `types.playbook.budget`; the Playbook type row renders "set per playbook (below)" instead of a crew) |
 | `GET /api/v2/ledger/*` | owned by Lane 1, see 5.2 |
 
-**Done sessions (2026-10-12).** The orchestrator closes a finished task with the no-op shell command `: team-done` (exactly, surrounding whitespace allowed, at most 200 characters, never from a helper). `hooks/team_events.py` logs it at PreToolUse as `{ev: "TeamDone", ts, sid, cwd}` and nothing else, in the team-live log next to `WorkType`. In `teamlive`, a session is `done` when a main-session `TeamDone` (not `in_agent`) comes after its current task's opener (the latest `WorkType` or playbook command, the same anchor as the current-task window); a newer opener re-opens it, and a session with no opener is never `done`. `GET /api/v2/team` sessions carry `done` (bool). `waiting` is true only while the session is idle, the last main-session event is a Stop within 2 h AND the session is not `done`; `/api/v2/attention` follows `waiting`, so a done session reads `idle` there. `done` changes nothing else (`status`, hiding, timelines). The Team row shows a quiet `done` label where `waiting` would show. Known accepted limit: `TeamDone` is logged at PreToolUse, so in enforce mode a team-done refused by the done-lock still shows done until the next declaration; the ledger stays the record.
+**Done sessions (2026-10-12, amended 2026-10-13).** The orchestrator closes a finished task with the no-op shell command `: team-done` (never from a helper). `hooks/team_events.py` matches it like the Atlas hook does: on the FIRST line of the command (capped at 200 characters), `^\s*:\s*team-done\b`, anything may follow (`: team-done now` and a `: team-done` followed by more lines count; `: team-doner` does not). It logs `{ev: "TeamDone", ts, sid, cwd}` and nothing else at PreToolUse, in the team-live log next to `WorkType`. In `teamlive`, a session is `done` when a main-session `TeamDone` (not `in_agent`) comes after its current task's opener (the latest `WorkType` or playbook command, the same anchor as the current-task window) AND no main-session (not `in_agent`) `UserPromptSubmit` comes after the last such `TeamDone`: when the operator writes again, the session stops being `done` (it is then working or waiting as usual) until the next `: team-done`. A newer opener also re-opens it, and a session with no opener is never `done`. `GET /api/v2/team` sessions carry `done` (bool). `waiting` is true only while the session is idle, the last main-session event is a Stop within 2 h AND the session is not `done`; `/api/v2/attention` follows `waiting`, so a done session reads `idle` there. `done` changes nothing else (`status`, hiding, timelines). The Team row shows a quiet `done` label where `waiting` would show. Known accepted limit: `TeamDone` is logged at PreToolUse, so in enforce mode a team-done refused by the done-lock still shows done until the next declaration or prompt; the ledger stays the record.
 
 **Live helpers (2026-10-10).** A session is `working` when its main conversation is working OR at least one of its
 helpers is live, background (`run_in_background`) or foreground alike. A helper is live when the event log has its
@@ -533,14 +535,14 @@ effect is missing), `notes` (all `bypass_note` events for the attempt, oldest fi
 by code and can be trusted, a note is an account to be read with care and never overrides them) and
 `actor_is_main`. Wording never claims more than the ledger shows ("The command looks read-only."). Missing fields
 on older events read "Not recorded."; the actor falls back to the event's top-level `agent_type`/`agent_id`,
-else the Chief. `integrity` = `store.verify_chain()` (§1,
+else the orchestrator. `integrity` = `store.verify_chain()` (§1,
 §6.4 rule A), cached until a day file changes. *(2026-10-10)* The payload is `{intact, status, breaks, acknowledged,
 files, lines}`: `status` ∈ `intact`, `intact, N acknowledged`, `broken`; `intact` is false only while a break is
 unacknowledged; each break is `{file, line, id, verdict (accidental|tampering|unclear), summary (the plain-words
 verdict, §1), signs: {accidental: [words], tampering: [words], of: 6}, acknowledged, ack_t}`. Reading rule (a) of the
 bypass report ("After a rework refusal") fires only when the attempt's actor is a builder (`builders` in
 `workflows.yaml`) and a rework `refusal` in the same session within 30 min concerned the same helper type (or the same
-`agent_id`, through the refusal's `tuid` and `helper_paired`); reviewers, scout, test-runner and the Chief never trigger
+`agent_id`, through the refusal's `tuid` and `helper_paired`); reviewers, scout, test-runner and the orchestrator never trigger
 it, and a refusal without a recorded helper never does. The context line then says "A rework round was over budget
 for this task (helper not recorded)", and a count above the budget reads "N review rounds asked for changes on this
 task (budget B; rounds beyond it were logged, not enforced)" instead of "N of B rework used".
@@ -576,7 +578,7 @@ crew, status, verdict, review_min}]` (automatic sessions' actual time; feeds the
 
 **Which files:** `ATLAS_SCHEDULE_FILE` (default: repo `schedule.yaml`), `ATLAS_TASKS_FILE` (default:
 repo `tasks.yaml`), `ATLAS_PLAN_VERSION_FILE` (default `<data>\plan-version.json`). The
-branch server points all three at copies in `<data>\v2-sandbox\` (made by the Chief at
+branch server points all three at copies in `<data>\v2-sandbox\` (made by the orchestrator at
 Join 1 from the live files); the live `schedule.yaml` is written by v2 only after the merge.
 A missing schedule or tasks file: GET returns empty sections; writes return 503 `no plan file` and
 never create one.
@@ -617,8 +619,11 @@ the effective attention changed, so a notes-only edit on legacy overlapping data
 `MAX_PARALLEL` lives in `cockpit/plan/model.py` only.
 **The screen only moves things (2026-10-11).** Events are created by chat: a session describes the plan, and
 `tools/plan_day.py` applies it through this API. The Plan screen no longer creates events (no click or drag on empty time,
-no "New event" button, task cards cannot be dragged onto the calendar); it still drags and resizes existing events, opens an
-existing event to edit or delete it, and shows a refused move with the server's reason as visible text. Week view: full
+no "New event" button); it still drags and resizes existing events, opens an
+existing event to edit or delete it, and shows a refused move with the server's reason as visible text.
+*(Amended 2026-10-15.)* Memo cards from the "To schedule" rail (§8.4a) may be dragged onto the week or day calendar: the drop
+posts `task/place` (`target: "me"`, duration = the task's `estimate_min`, 60 when missing), which creates the linked event or MOVES the
+one already linked. The screen still never creates events on empty time (no click or drag on an empty slot). Week view: full
 events span the column, shared events are packed into tracks inside their overlap cluster (width = column / tracks), `SHORT · title`
 at half a column or more, the first three letters of `SHORT` at a third, no count marker on parallel clusters. Day view: one row per track needed that day,
 full events span all rows; the day header shows `work Xh · sessions Yh` over the shared events only (union of their time, sum of their durations; full blocks such as training, meals and leisure are left out); a third-width week block and a day-view block of 30 minutes or less show only the first three letters of their area tag (time and title in the tooltip); every block is drawn at its true length.
@@ -631,7 +636,10 @@ unchanged and tolerant: the read payload still carries `agents` (`actual` items 
 tasks with `owner: agents` or a stored `planned` slot still load and show as normal task cards (the owner as a small
 label; a stored agents slot shows as "planned <day> <time>", the card can be dragged onto the calendar like any task).
 Task rows carry `planned: {day, start, end, on: "me"|"agents"}` when planned: `on: "me"` is derived from the
-event whose `task_of` is the task id (the event is the truth), `on: "agents"` is a stored legacy `planned` slot. Review tray: automatic tasks that finished READY and are not yet reviewed
+event whose `task_of` is the task id (the event is the truth), `on: "agents"` is a stored legacy `planned` slot. *(2026-10-15)* `planned` also carries `done: true` when `on` is `"me"` and the linked event is marked done
+(`done` on the event; the key is absent otherwise). **Review tray: PARKED (2026-10-15, decided by the operator).** The server is unchanged (the
+`review_tray` payload key, `review/schedule`, `review/done` and `plan.api.review_tray_count()` stay, like the agents lane, for later automatic sessions);
+the Plan screen does not show the tray. Tray items: automatic tasks that finished READY and are not yet reviewed
 (from `auto_runs` with `status` done, minus those marked reviewed in `tasks.yaml` `reviews:`).
 
 **Write** (all `POST`, body JSON, every write carries `"base": <version the client last saw>`):
@@ -686,7 +694,12 @@ response whose `version` is lower than one it has seen. The Plan endpoint never 
 prints one tab-separated line per event of the range: day, `start-end` (or `all-day`), area short, attention, id, title.
 `py -3.12 tools/plan_day.py apply <ops.json|-> [--dry-run]` applies a JSON list of ops in order, each with a fresh `base` (the
 version is read before every write): `{"op":"add","title","day","start","end","area"?,"attention"?,"notes"?}`,
-`{"op":"move","id","day","start","end","occurrence"?}`, `{"op":"delete","id"}`, `{"op":"retitle","id","title"}`, `{"op":"done","id"}` and `{"op":"undone","id"}` (post to `/api/v2/plan/event/done`). `show` appends
+`{"op":"move","id","day","start","end","occurrence"?}`, `{"op":"delete","id"}`, `{"op":"retitle","id","title"}`, `{"op":"done","id"}` and `{"op":"undone","id"}` (post to `/api/v2/plan/event/done`). *(2026-10-15)* Two more ops for memos (tasks of the "To schedule" rail):
+`{"op":"memo","title","area","estimate_min"?}` posts `/api/v2/plan/task` (`owner: me`, `state: todo`) and prints the new id; `{"op":"place","task","day","start","end"?}`
+posts `/api/v2/plan/task/place` with `target: "me"`, `end` defaulting to `start` + the task's `estimate_min` (60 when missing; read from `GET /api/v2/plan`).
+`py -3.12 tools/plan_day.py memos [--url URL]` lists the memos, open first then scheduled (same filter as the rail: `source: "tasks.yaml"`, state not `done`,
+linked event not done), one tab-separated line each: id, area short, `estimate_min` (empty when none), `open` or `planned <day> <start>`, title. Same
+conventions as the other ops (fresh `base` per write, stop at the first refusal, server reason printed, exit 1, `--dry-run`). `show` appends
 a final column `done` on done events. An id written
 `evt_xxxxxxxx@YYYY-MM-DD` (as `find_plan_item.py` prints it) is split into id + `occurrence`; for `delete` it skips that one
 occurrence. It stops at the first refusal, prints how many ops were applied and the server's reason verbatim, and exits 1 (0 when
@@ -722,12 +735,12 @@ backup `settings.json.bak-<timestamp>` first; idempotent: a second run changes n
 `team_events.py` and `require_named_helper.py` stay registered; `team_events.py` gets only the §0 one-line regex change.
 
 One script, `hooks/atlas_hook.py`, handles every event (`hook_event_name`), registered **sync**
-(guards must be able to deny) on: PreToolUse `Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback`,
+(guards must be able to deny) on: PreToolUse `Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage|mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__update_scheduled_task|RemoteTrigger`,
 PostToolUse `Agent|Edit|Write|NotebookEdit`, SubagentStart, SubagentStop, Stop, SessionStart,
 SessionEnd, UserPromptSubmit, UserPromptExpansion. Registration uses the same `command` (full
 `python.exe` path) + `args` form as the existing entries, never `py -3.12`. Timeout 5 s.
 Fast path: a Bash/PowerShell command that is not a `: team-*` no-op and matches none of the deny
-patterns of §6.4 and §6.4b returns at once.
+patterns of §6.4, §6.4b and §6.4c returns at once.
 
 **Fail open, always:** `main()` is wrapped in `try/except BaseException`; the process always ends
 with `os._exit(0)` (no argparse, no `sys.exit`, so never exit code 2, which would deny or block).
@@ -737,7 +750,7 @@ on UserPromptSubmit/SessionStart would be injected into the model's context).
 `ledger/hook-errors.log` records exception type, file and line only, never a payload or a `repr`
 (a traceback can carry prompt text). The installer dry-runs the installed command with a sample
 payload for each registered event and refuses to write `settings.json` unless every run exits 0 with
-empty stdout. **No lane runs `install_hooks.py` against the live `~/.claude`;** the Chief runs it at
+empty stdout. **No lane runs `install_hooks.py` against the live `~/.claude`;** the orchestrator runs it at
 Join 1 (tests use `ATLAS_HOOKS_DIR` / `ATLAS_SETTINGS_FILE`).
 
 **`area_for`:** the hooks never import the repo; the installer copies `cockpit/ledger2/areas.py`
@@ -776,7 +789,7 @@ On PreToolUse Agent with `subagent_type` in `builders`: if the current task has
 blockers; only the operator can grant another round with /grant-rework."` Reviewers, test-runner and scout
 are never refused by this guard. Budget `null` (quick question) never applies (the lock does).
 While the guard is tripped, the **main session's** own non-exempt Edit/Write/NotebookEdit on that task
-is refused too (the Chief can't make the fixes itself past the budget). Type-switch carry-over: §1.2.
+is refused too (the orchestrator can't make the fixes itself past the budget). Type-switch carry-over: §1.2.
 
 ### 6.3a Reminder: one task per piece of work (2026-10-10)
 The hook cannot infer pieces of work, so it nudges. On PreToolUse Agent in the main session, never blocking, at most
@@ -799,13 +812,85 @@ missing entry fails closed). It logs `rework_granted {n}` on the current task: `
 **as a command**: `(?:^|[;&|(]\s*|\s)claude(?:\.exe)?(?=\s)` where the match is not preceded by
 `.`, `/`, `\` or a word character, OR `[\\/]claude\.exe\b` (a claude called by its path), in both
 cases followed later in the same command by `\s(-p|--print|--resume)\b` (e.g. `claude --resume <sid>
--p "/grant-rework 5"`). *(Amended at the Lane 1 review: the standalone `/grant-rework` text pattern
+-p "/grant-rework 5"`). **Also denied (since 2026-10-13):** any command SEGMENT (split on `;` `&` `|` newline, quotes removed)
+that runs `claude` as a command (the same two patterns, `claude.exe|.cmd|.ps1` accepted, behind any wrapper: `Start-Process`,
+`start`, `cmd /c`, `wt`) AND contains `/(?:allow-config|allow-publish|grant-rework|ack-break)\b`, with or without `-p`: an
+claude started with a user-only command as its prompt. `git commit -m "... /allow-config ..."` and
+`grep allow-config` run no claude and pass. **Round 3 (2026-10-13):** the check reads the quote-free text AND a copy with
+backticks removed (`cla''ude "/allow-con""fig go"`, PowerShell's `` `f `` escape), the name pattern also accepts a bare
+`claude-code` (`npx claude-code`), the path pattern the package folder `@anthropic-ai/claude-code` and anything below it
+(`node C:/x/node_modules/@anthropic-ai/claude-code/cli.js /allow-config`; a path ending in
+`/claude-code` alone is not a launch), and a `,`, `(`, `)` or `=` boundary (`-ArgumentList '/c','claude','/allow-config'`,
+`(Get-Command claude).Source`, `core.pager=claude`), and the path pattern accepts `.exe|.cmd|.ps1`. The interactive-spawn rule
+is skipped for a segment whose head only prints or searches: `echo`, `printf`, `Write-Host`, `Write-Output`, `grep` and the grep family
+(`rg`, `Select-String`, `findstr`, `ack`) and `git` WITHOUT a program-running option (`-c`, `--config`, `--upload-pack`,
+`--receive-pack`, `--exec`, `-O`, `--open-files-in-pager`; `rg --pre`): a commit message such as
+`git commit -m "Hooks: /allow-config gate" -m "Co-Authored-By: Claude ..."` passes, `git -c core.pager='claude /allow-config' log`
+is denied. **Follow-ups (2026-10-13):** (a) the skip does not apply to a segment that holds `$(`, a backtick or `(&`: a
+command substitution under an echo, grep or git head still runs (`echo $(claude "/allow-config go")`,
+``echo `claude /allow-config` ``, `git log $(claude /allow-config)` are denied); (b) the bodies of heredocs that nothing
+runs are data and are removed before the check: `git commit -m "$(cat <<'EOF' ... EOF)"` and
+`git commit -F - <<'EOF' ... EOF` may name a user-only command and "Claude" in the message. **Round 4 (2026-10-13):** only the
+bodies `_shell_split` itself returns are cut (it knows the quoting): a `<<` inside quotes, or after an unclosed `((`, `$((` or
+`$[` on its line (`echo $((1<<2))`), is not a heredoc. A body is kept (and scanned) when its delimiter is unquoted (`<<EOF`; not
+`<<'EOF'`, `<<"EOF"`, `<<\EOF`) and it holds `$(` or a backtick, because the shell expands it (`cat <<EOF` / `$(claude /allow-config)`
+/ `EOF`); when its own pipeline (segments joined by `|`) holds a shell (`bash`, `sh`, `zsh`...), `cmd`, `powershell`, `pwsh`, an
+interpreter, `eval`, `iex`, `source`, `claude`, `tee` or a file redirection (a later run), or a `.` as the head (the publish
+parser's rule, §6.4b: a body is a script when a shell reads it; an escaped `<` (`echo a\<<EOF`) is text and starts no heredoc, and
+the arithmetic `((`, `$((`, `$[` is tracked in the splitter's own pass, not by a look-back window, so padding cannot hide it); when it sits in a string handed to such a program
+(`bash -c "$(cat <<'EOF' ...)"`); or when it has no closing line. A reader in ANOTHER pipeline of the same command
+(`git add . && git commit -F - <<'EOF'`, `py -3.12 -m pytest hooks -q && git commit -F - <<'EOF'`) does not keep the body.
+**Single quotes (round 4):** a `$(` or backtick inside single quotes is text (bash and PowerShell), so
+`git commit -m 'Hooks: `/allow-config` gate' -m 'Co-Authored-By: Claude ...'` passes; outside single quotes, double quotes
+included, it still runs and the skip stays off. A command holding `<<` or an unclosed single quote is judged on the bare
+characters. The skip also covers lookups and readers (`which`, `where`, `Get-Command`, `type`, `ls`, `dir`, `cat`,
+`Get-Content`, `Get-ChildItem`, `stat`, `file`, `head`, `tail`, `wc`, `readlink`, `realpath`).
+
+**No claude from a shell (round 4).** A claude started from the Bash or PowerShell tool is always headless and inherits the
+`claude-desktop` entry, so a prompt given through stdin, an argument or a heredoc (`echo /allow-config | claude`,
+`claude <<'EOF' ... EOF`, `cat <<EOF | xargs claude`, `claude "$(cat <<'EOF' ... EOF)"`) would reach the hook as an interactive
+UserPromptSubmit: a self-grant. So a session may not start claude from a shell at all, the same as `claude -p`. Any segment
+that launches claude (the name or path patterns above, at a program position: not as an argument of an echo, grep or git head or a
+lookup such as `which claude`, and not `command -v claude`) is denied unless the words after it are only an info subcommand:
+`--version`, `-v`, `--help`, `-h`, `doctor`, `mcp list`, `mcp get <name>` (a trailing `2>&1` or `> /dev/null` is allowed). The check
+runs beside the forged-grant check, is logged `ignored` ("forged grant command") and denies with: "A session can't start claude from
+a shell: only the operator starts sessions (claude --version, --help, doctor and mcp list/get are allowed)." The `claude-code` rule
+holds (a path ending in `/claude-code` alone is not a launch). A word such as `pytest -k claude` is read as a launch (a false
+positive that is cheap to avoid). **Round 6 (2026-10-13):** (a) a running substitution defeats the skip under every head, the
+readers included: `$(`, a backtick, an unquoted process substitution `<(` or `>(` (`cat <(claude /allow-config)`,
+`echo hi > >(claude x)`), an unquoted `(` that opens with claude (`cat (claude x)`, `Write-Host @(claude x)`: PowerShell runs a
+parenthesised argument as a command; inside quotes a `(` is text, so `git commit -m "Hooks (claude launches refused)"` passes) and
+the call operator on a group (`& (gcm claude)`); (b) the boundary before the name also takes `[`, so a Python list launch
+(`subprocess.run(['claude','/allow-config'])`) is a launch; (c) a backslash between two letters is dropped by the shell, so
+`c\laude /allow-config` is read as claude; (d) the skip covers process and file tools that only name claude as a process or a file:
+`Get-Process`/`gps`/`ps`, `Stop-Process`/`kill`, `taskkill`, `tasklist`, `Test-Path`, `gh`, `pip`, `cd`/`pushd`/`Set-Location`,
+`mkdir`/`md`, `rm`/`del`/`Remove-Item`, `mv`/`move`/`Move-Item`, `find` without `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint*`,
+`npm view|ls|list|info`, a leading `(` on the head (`(Get-Command claude).Source`), and `py`/`python` given a script path
+(`py -3.12 tools/x.py "claude team"`; `-c` and `-m` stay scanned, so `py -3.12 -c "print('claude')"` is still refused); (e) a heredoc
+body is also kept when its pipeline writes it to a file by `1>`, `1>>`, `dd`, `Out-File`, `Set-Content`, `Add-Content`, `sponge` or `tee`
+(a `2>` does not); (f) an internal error in either check fails CLOSED on a command that names claude (the error is logged; a failing
+log never turns the deny into an allow) and open on any other command. Honest limits: claude reached through a variable
+(`$c='cl'+'aude'; & $c`), through a file prepared earlier (a script written by one command, then `bash s.sh`), or through a lookup
+piped into a runner (`type claude | sh`, `which claude | xargs -I{} {}`) is not seen. A claude word given to `py` as a script
+argument is not seen either (the script is trusted). Also not seen: a heredoc written to a file by `&>`, `>&file` or
+`cp /dev/stdin s.sh <<'EOF'` (a file prepared earlier), and a `claude.bat`, `claude.com` or `claude-desktop` launcher (none
+of them carries a session on this machine). The bare `cd atlas-anchor` rule matches the text anywhere, so `echo cd atlas-anchor`
+or a commit message holding those words is recorded as a bypass attempt (a known false positive).
+Both checks read a newline INSIDE a quoted string as a space (a multi-line `git commit -m "...\nCo-Authored-By: Claude ..."` is
+one command); only a newline outside quotes ends a command, a quote inside a `#` comment opens nothing, and an unclosed quote,
+a backslash right before a quote (`"D:\AI\"`, `\"`, `\'`: bash and PowerShell read them differently) or ANSI-C `$'...'`
+leaves every line read as a command (fail safe; such a command with a multi-line `-m` naming Claude is refused, a known
+false positive). An open `/allow-publish` allowance never skips these checks: a command that publishes AND starts claude
+(`git push origin main && claude /allow-config`) is refused, and the allowance it used is spent.
+The deny text names the refused command: "Only the operator can run /allow-config, by typing it. This command was
+refused." (`/allow-config`, `/allow-publish`, `/grant-rework` or `/ack-break`; `/grant-rework` for a bare `claude -p`).
+Honest limit: a command assembled at run time through a variable (`$a='/allow-config'; Start-Process claude $a`) is not seen. *(Amended at the Lane 1 review: the standalone `/grant-rework` text pattern
 is dropped, since only a nested claude call can produce a UserPromptSubmit and the text pattern
 denied plain mentions.)* Mere mentions and folder paths pass. **Required test, zero denials:**
 `mkdir -p ~/.claude/skills/grant-rework`, `ls -p ~/.claude`,
 `git add hooks/skills/grant-rework/SKILL.md`, `git commit -m "add /grant-rework skill"`,
-`grep -n "/grant-rework" docs`. The launcher (§7) refuses a brief with a line starting `/grant-rework`.
-The skill body tells the Chief: The operator granted n more round(s); continue the task.
+`grep -n "/grant-rework" docs`. The launcher (§7) refuses a brief with a line starting `/grant-rework`, `/ack-break`, `/allow-publish` or `/allow-config`.
+The skill body tells the orchestrator: The operator granted n more round(s); continue the task.
 
 ### 6.4a `/ack-break <break id>` (2026-10-10)
 A user-only skill, mirror of `/grant-rework`: `hooks/skills/ack-break/SKILL.md` with `disable-model-invocation: true`,
@@ -813,9 +898,10 @@ installed by `tools/install_hooks.py` with the other skill. Honoured ONLY from U
 `/ack-break <id>` (`^\s*/ack-break(?:\s+(id))?\s*$`), never from a helper. **Entry rule (grants and acks):** the
 entry must be in `interactive_entries`; an empty or missing list falls back to the FIXED set `cli`, `claude-desktop`,
 `claude-vscode` (never "any entry"), because UserPromptSubmit also fires for prompts nobody typed (scheduled tasks,
-background reports, cross-session messages). **Forwarded prompts:** PreToolUse on `CronCreate`, `ScheduleWakeup` and
-`SendMessage` is denied in every mode when a `prompt`/`message`/`content`/`text`/`body`/`summary` field (nested objects
-too) starts with `/ack-break`, `/grant-rework` or `/allow-publish` (§6.4b), logged `ignored` ("forged user-only command via <tool>"). A PreToolUse
+background reports, cross-session messages). **Forwarded prompts:** PreToolUse on `CronCreate`, `ScheduleWakeup`,
+`SendMessage`, `RemoteTrigger` and the desktop scheduled-tasks tools `mcp__scheduled-tasks__create_scheduled_task` and
+`mcp__scheduled-tasks__update_scheduled_task` (since 2026-10-13) is denied in every mode when a `prompt`/`message`/`content`/`text`/`body`/`summary` field (nested objects
+too) starts with `/ack-break`, `/grant-rework`, `/allow-publish` (§6.4b) or `/allow-config` (§6.4c), logged `ignored` ("forged user-only command via <tool>"). A PreToolUse
 Skill for `ack-break` is denied in every mode and logged; a shell mention or a UserPromptExpansion alone does nothing.
 **The id is required.** With no id, an unknown id or an id that is not an unacknowledged break, nothing is acknowledged:
 `ignored` is logged and the hook answers with `systemMessage` + `additionalContext` ("needs the break id shown on the
@@ -890,7 +976,9 @@ publish in the whole command (not the first). Per segment:
   (`pnpm wrangler deploy`);
 * a double-quoted string that holds `$(...)` or a backtick, a here-string (`bash <<< "git push"`), and a heredoc body that
   a shell in the same command reads (`cat <<EOF | bash`) are scanned too. A heredoc body nobody executes (a commit
-  message, `cat <<EOF > file`) is data and passes. Blocks, decided in the same pass where quoting is known: an UNQUOTED `{`
+  message, `cat <<EOF > file`) is data and passes, except that (round 6) the body of an UNQUOTED delimiter that holds `$(` or a
+  backtick is scanned too, because the shell expands it (`cat <<EOF` / `$(git push origin main)` / `EOF`). A `<<` after an unclosed `((`, `$((` or `$[` on its line
+  (`echo $((1<<2))`) is an arithmetic shift, not a heredoc; a delimiter written `\EOF` is quoted like `'EOF'` and ends at `EOF`. Blocks, decided in the same pass where quoting is known: an UNQUOTED `{`
   that starts a token and an UNQUOTED `}` that ends a token (followed by a space, a line break, the end or one of `;&|()`)
   are segment boundaries like `;` and are dropped, so the contents of PowerShell and shell blocks are read as commands
   (`try { git push } catch { }`, `% { git push }`, `Measure-Command { ... }`, `function p { git push }`, `. { ... }`).
@@ -954,7 +1042,10 @@ publish command is always denied, with or without a grant, and does not use one 
 
 **The deny never waits for the ledger.** A hook that runs past its timeout lets the command through, so the DENY is decided
 before the ledger lock is taken, from a lock-free read of the state cache (`pub_n`, `pub_exp`): no grant, a helper, a
-missing or unreadable cache (a cold cache is never rebuilt here) all deny at once. The lock is taken only to use up a
+missing or unreadable cache (a cold cache is never rebuilt here) all deny at once. Since 2026-10-13 the cache is also not
+trusted to ALLOW: an open grant in the cache is confirmed by the ledger's own `publish_grant` / `publish_allowed` events
+for this session (read from the end of today's and yesterday's day files, without the lock; see §6.4c), and a mismatch
+denies and logs `ignored` ("grant not in ledger"). The lock is taken only to use up a
 grant, with a short wait (about 0.5 s); a busy lock denies and leaves the grant untouched. The refusal is logged
 afterwards, best effort (about 0.2 s of waiting for the lock, then an unlocked line flagged `nolock`; a missing cache is
 not recreated; the refusal never saves state). Measured on the build machine, a denied `git push` takes about 0.4 s end to end (Python start-up included)
@@ -1003,15 +1094,173 @@ The only exception is a segment that STARTS with a documented tool: optional env
 left-stripped segment, never `search`. An allowed segment still loses the exception if it contains a
 redirection (`<`, `>`), a backtick, `$(` or `${`; a second command in another segment is judged on its own.
 There is NO pytest exception (a test run that needs the ledger uses `ATLAS_LEDGER2_DIR` in a temp dir, which
-is not the real folder). Honest limit: a command that builds the path at run time (variables, string
-concatenation, `cd` then a relative name from a session whose cwd is outside the folder) is not seen;
+is not the real folder). **Relative name (2026-10-13):** a relative `atlas-data/ledger` and `atlas-anchor` also match when
+the name starts a path token (start of the text, whitespace, a quote, `=`, `:` or `./` before it), so `echo x >> atlas-data/ledger/events-2026-10-13.jsonl`
+from `D:\AI` is seen; `docs/atlas-data-notes.md` and `my-atlas-data/ledger` are not (the name must be exactly `atlas-data`, a
+separator and `ledger`). The relative anchor form needs a separator after the name (`atlas-anchor/`): a bare mention
+(`grep -n atlas-anchor docs/v2/contracts.md`, `git log --grep=atlas-anchor`) is text; the absolute `D:\AI\atlas-anchor` is still protected,
+and so is a bare `atlas-anchor` right after `cd`, `pushd`, `chdir`, `Set-Location` or `git -C` (round 6: the folder to move into). Honest limit: a command that builds the path at run time (variables, string
+concatenation, `cd` into the folder by another route and then a shorter name) is not seen;
 Edit/Write denial, the chain and the tamper count remain the other layers. The Ledger shows "Bypass attempts
 this week: N (all blocked)" and the list. The numbers are also the material for the LinkedIn post.
+
+### 6.4c The config gate and `/allow-config` (2026-10-13)
+The operator's rule: the files that define how Claude sessions and agents behave change only with the operator's OK. **In EVERY mode**
+(record and enforce alike, like the publish gate), an Edit, Write or NotebookEdit on a config path, and a Bash or
+PowerShell command that changes one, is denied unless the operator holds an open grant in this session. Deny reason:
+"Changing instructions, skills or settings needs the operator's OK: show the operator the exact change, then ask the operator to type
+/allow-config." Precedence for an edit: the protected-path rule first (the ledger and hooks folders, "can't be edited"),
+then this gate, then the exempt rule and the other guards. For a shell command: rule B (§6.4), then this gate, then the
+publish gate (§6.4b), then the forged-grant check (§6.4a), then the `: team-*` handling. On a shell command this gate
+only DENIES: an open grant lets the command past this gate and on to the checks after it, so a command that also publishes
+needs a publish grant too, and `claude -p '/grant-rework'` is refused whatever grants are open. The allowance is logged
+once per command.
+
+**What is a config path** (`Hooks.is_config`, case-insensitive, on the path components):
+* the file name is `claude.md`, `claude.local.md`, `skill.md`, `.claude.json` (the user-level MCP servers and allowed
+  tools) or `.mcp.json`, anywhere on disk;
+* a component is exactly `.claude` and the next component is `skills`, `agents`, `commands`, `hooks`, `rules`,
+  `output-styles` or `plugins` (anything below it);
+* the 8.3 short forms count: `CLAUDE~1` for `.claude`, `CLAUDE~1.JSO` for `.claude.json`, `OUTPUT~1` for `output-styles`,
+  `SETTIN~1.JSO` for `settings.local.json`;
+* a file directly inside a `.claude` folder whose name ends in `.md` (so `~/.claude/CLAUDE.md` and
+  `~/.claude/profile.md`) or matches `settings*.json`.
+
+Not config: `.claude/projects/**` (memory and transcripts stay free), `.claude/worktrees/**` (except the file-name rule),
+everything else. The path forms of §6.5 apply: ANY form (absolute, real, stream-stripped) that matches counts. An edit on a
+config path is gated, not recorded as an `edit` (no version bump, no send-back).
+
+**Shell** (`config_shell`). The command is split like the bypass classifier (`;` `&` `|` newline), quotes removed, `/./`
+collapsed. A segment is gated when its text names a config path and `_segment_effect` (the bypass classifier's read /
+change / delete / unclear reading, with the config patterns) is not `read`. The patterns, linear and case-insensitive,
+keyed on the text so `~`, `$HOME`, `%USERPROFILE%`, `$env:USERPROFILE` and absolute paths all match: `.claude/` (or `CLAUDE~<n>/`) followed by
+`skills|agents|commands|hooks|rules|output-styles|plugins`; `.claude/` followed by a `*.md` name directly (not `projects`);
+`.claude/settings*.json`; a `.claude.json` or `.mcp.json` name; a `CLAUDE.md`, `CLAUDE.local.md` or `SKILL.md` name after a
+start, separator, whitespace, quote or `=`; and the BARE folder `.claude` as the last path component (label `claude-root`:
+`tar -xf x.tar -C ~/.claude`, `git -C ~/.claude reset --hard`, `cmd /c mklink /J j ~/.claude`; a read such as `ls ~/.claude`,
+`find ~/.claude -name x`, `git -C ~/.claude status` stays free). The hint pre-filter runs on the quote-stripped, lower-cased
+text (`~/.cl''aude/CLAU''DE.md` is read as it will run). A segment that
+RUNS `install_skills.py` or `install_hooks.py` (directly or through an interpreter, `bash -c`, `cmd /c`, `xargs`...) is
+always gated: both write into `~/.claude`. Naming them in `git add`, `grep` or a test path does not. Rule B's exception for `tools/install_hooks.py` (§6.4) is unchanged; the config gate stacks on top of it. If the session's cwd is
+inside a config tree (`.claude/skills|agents|commands|hooks|rules|output-styles|plugins`, or the bare `.claude` folder), every
+segment must be a read, judged as if every path were protected (`cp /tmp/x settings.json` is a write there; a redirect to a
+file other than `/dev/null` counts as a write too). `cd`/`pushd`/`Set-Location` into a config folder is fine on its own and
+gates the OTHER segments of the same command that are not reads, by the same stricter reading. **Config file into a
+folder:** a `cp`, `copy`, `Copy-Item`, `xcopy`, `robocopy`, `rsync`, `mv`, `move`, `Move-Item` or `ln` with a config-named
+SOURCE (`CLAUDE.md`, `settings*.json`, `.claude.json`, `.mcp.json`...) and a folder-like destination (a trailing separator,
+`.`, or a last component without an extension) is gated (label `config-file-copy`): it lands under its own name wherever
+the folder is. It is a read only when the destination is a file name that is not itself config. **Path in one segment, run
+in the next:** when an earlier segment names a config path and a LATER segment starts with `xargs`, `sh`, `bash`, `zsh`,
+`cmd`, `powershell`, `pwsh`, `iex`, `Invoke-Expression`, `%`, `ForEach-Object`, `foreach`, `while`, `source` or `.`, the
+command is gated. Reads stay free: `cat`, `Get-Content`, `grep`, `ls`, `head`, `diff`,
+`git diff|log|show|status|blame|grep`, a `cp` whose destination is not a config path, `sed -n '<n>p'` without `-i`.
+Three upgrades from "unclear" to "read" are made for config only (the bypass classifier is unchanged): printing (`echo`,
+`printf`, `Write-Host`...) without substitution, `mkdir` (an empty folder changes no instruction), `du`, `realpath` and
+`readlink`, and git subcommands that do not write the working tree (`add`, `commit`, `branch`, `tag`, `remote`, `status`,
+`log`, `show`, `diff`...), so a commit message or an `echo` that merely mentions `CLAUDE.md` passes. The git upgrade is
+never made when the segment carries an output flag (`--output`, `-O<file>`...) or an option that runs a program or sets a
+config value (`--upload-pack`, `--receive-pack`, `--exec`, `-O`, `--open-files-in-pager`, `-c`, `--config`); `git fetch`
+and `git grep` are not in the list. A command over 200,000 characters is refused (`oversized command`); an exception in the matcher
+denies (`unreadable command`). A backtick-stripped copy of the command is scanned too (PowerShell's escape). The label
+logged and shown is one of `claude-folder`, `claude-md`, `settings`, `claude-json`, `mcp-json`, `instruction-file`,
+`claude-root`, `config-file-copy`, `install-tool`, `glob-path`, `cwd`, `oversized command`, `unreadable command`; never the command.
+
+**`..` is collapsed (round 3).** Both this scan and rule B (§6.4) match the text as written AND two more readings of it:
+(1) every whitespace/quote/`;&|<>()`-delimited token holding `..` is collapsed lexically (backslashes read as slashes,
+`posixpath.normpath`, a leading `~`, drive or `$VAR` / `%VAR%` prefix kept as the root), so
+`echo x > ~/.claude/projects/../agents/evil.md` is read as `~/.claude/agents/evil.md` and
+`<repo>/../atlas-data/ledger/...` as `<data>/ledger/...`; (2) every relative token holding `..` is resolved
+against the session's working folder (`echo x > ../../../agents/evil.md` from `~/.claude/projects/<p>/memory`;
+`echo x > ../atlas-data/ledger/x` from `<repo>`). A token that starts with an option prefix (`^(?:--?[\w-]*=|-[\w-]+:|[A-Za-z]\w*=)`: `of=`,
+`--output=`, `-Path:`; no separator inside it, so `~/.claude/projects/a=b/../..` and `<repo>/x=y/../..` are not split) has
+the prefix split off once (never recursively), the rest collapsed or resolved, and the prefix glued back; the token read
+unsplit is ALSO kept as a variant (`dd of=../atlas-data/ledger/state/s.json`, `Out-File -FilePath:../atlas-data/ledger/x`,
+`cp x --target-directory=../../../agents` from a memory folder). The hint pre-filter sees all readings.
+
+**Globs and escapes (round 3).** A path token that names `.claude` (or `CLAUDE~<n>`) and holds a glob character (`?`, `*`, `[`),
+or, in a POSIX-looking path (a `/` in the token), a backslash before a name character (`~/.claude/CLAUDE\.md`), cannot be
+read literally, so a segment holding one is gated (label `glob-path`) unless it is a read: `echo x > ~/.claude/CLAUDE.m?`,
+`cp evil.sh ~/.claude/sk?lls/x/run.sh`, `cp evil.py ~/.claude/hook[s]/x.py` are gated; `ls ~/.claude/skills/*` and
+`cat ~/.claude/CLAUDE.m*` stay free. A glob or escape that only comes AFTER the `projects/` or `worktrees/` component is
+free too (`rm ~/.claude/projects/*`, `rm -rf ~/.claude/projects/*/memory/tmp`, `echo x > ~/.claude/projects/*/memory/note.md`,
+the same under `worktrees/`), unless the token holds `..` (`~/.claude/projects/*/../../agents/x` stays gated) or the text after
+that component holds `claude`, `.mcp` or `mcp~` (`<repo>/.claude/worktrees/w/.claude/settings.jso?`, `.../w/CLAUDE.m?`,
+`.../w/CLAUDE\.md`, `~/.claude/worktrees/w/.claude/agent[s]/x.md` stay gated). **Round 6 (2026-10-13):** below the first component
+after `projects/` or `worktrees/` (the project or worktree name, which may itself be a glob: `worktrees/*`, `worktrees/agent-*`),
+every glob component is matched (`fnmatch`, case-insensitive) against the config names (`.claude`, `claude~<n>`, `mcp~<n>`,
+`CLAUDE.md`, `CLAUDE.local.md`, `SKILL.md`, `.mcp.json`, `.claude.json`, `settings*.json`, and the short names), and against the
+folder names `skills`, `agents`, `commands`, `hooks`, `rules`, `output-styles`, `plugins` when they follow a `.claude`-like component;
+a match gates (`w/.cl?ude/settings.json`, `w/.cl*/settings.json`, `w/CL?UDE.md`, `w/[C]LAUDE.md`, `w/.mc?.json`). A component that
+holds a backslash escape counts as a candidate after the backslashes are removed (`w/.c\laude/settings.json`). A component that names
+only an extension (`*.md`, `*.json`, `?.txt`) is not a match, so `echo x > ~/.claude/projects/*/memory/*.md` stays free; a bare `*` below
+the project or worktree name is a match (`rm -rf ~/.claude/worktrees/w/*` is gated). The 8.3 short names `CLAUDE~1.MD` (`CLAUDE.local.md`) and `MCP~1.JSO` (`.mcp.json`)
+are config names. Rule B also accepts the short names of the ledger folder and of the anchor clone
+(`D:\AI\ATLAS-~1\ledger`, `D:\AI\ATLAS-~1`).
+
+**The grant.** `/allow-config` opens a 15-minute window (no count: one change often needs several edits). A user-only
+skill, a mirror of `/allow-publish` (§6.4b): `hooks/skills/allow-config/SKILL.md` with `disable-model-invocation: true`,
+installed by `tools/install_hooks.py`; the model invoking it through the Skill tool is denied in every mode (logged
+`ignored`); it is refused inside `CronCreate`, `ScheduleWakeup`, `SendMessage`, `RemoteTrigger` and the scheduled-tasks tools
+(`USER_ONLY_RE`, §6.4a), and as the first prompt of a spawned `claude` (§6.4); it is honoured
+ONLY from UserPromptSubmit whose prompt STARTS with `/allow-config` (`^\s*/allow-config(?![\w-])`), never from a helper,
+and only on an interactive entry (§6.4a; otherwise `ignored` "config grant from non-interactive entry"). It needs no open
+task. The hook logs `config_grant {expires, entry}`; state keeps `cfg_exp`. The grant expires 15 minutes after it was typed
+or when the session ends (`session_end` clears it), and is per session. **Only the MAIN session can use it**: a helper's
+config change is always denied. It opens no other gate (publish, forged-grant and `: team-*` handling still run).
+
+**The deny never waits for the ledger.** Like the publish gate: the deny is decided from a lock-free read of the state
+cache (`cfg_exp`); no grant, a helper, or a missing or unreadable cache all deny at once (a cold cache is never rebuilt
+here). **The cache is not trusted to ALLOW (round 3):** the state cache is a plain file and can be forged, so when the cache
+shows an open grant, the gate also confirms it in the ledger (`ledger_grant_state`): this session's `config_grant` event
+(without an `agent_id`) is read from the end of today's day file, and of yesterday's for a grant just after midnight, back to
+two hours ago or this session's last `session_end`, bounded to 16 MB per file, without the lock and without rebuilding any
+state; a grant that is not live in the ledger denies and logs `ignored` ("grant not in ledger"). **Expiry cap:** a replayed
+grant never outlives its own timestamp plus its window (`t` + 15 minutes for `config_grant`, `t` + 30 minutes for
+`publish_grant`), whatever `expires` the event carries (a forged line with a one-day expiry and a `t` 20 minutes ago denies);
+a grant line whose `t` cannot be parsed, has no timezone or is more than 2 minutes in the future is skipped, and never fails the whole scan. The publish gate (§6.4b)
+does the same for `publish_grant` / `publish_allowed` (it replays the allowances, so a forged `pub_n` above the ledger's
+count denies). The lock is taken, with a short wait (about 0.5 s), only to log an allowed change as `config_allowed`; a busy lock
+denies. A refusal is logged afterwards, best effort (about 0.2 s of waiting, then an unlocked line flagged `nolock`; it never
+saves state). Every allowed change and every refusal is recorded: `config_allowed {path | what, tool}` and
+`refusal {guard: "config", would: false, path | what, tool, actor, detail}` (§1.2). A config refusal is not a rework
+refusal: the Ledger's rework counts and the bypass reading look at `guard: "rework"` only.
+
+**Honest limits (the gate stops honest mistakes and the plain forms, not a determined bypass):** a script that writes a
+config file internally (`py fix.py`, `make`, a build step, `python -m <module>`), a patch applied from a file or stdin
+(`git apply`, `patch`: the target path is inside the patch, not on the command line), a path built at run time, a config
+file copied or synced from a folder whose files are not named on the command line (`rsync -a /tmp/cfg/ D:/repo/`),
+aliases, run-time argument values (`$a='/allow-config'; Start-Process claude $a`, a path or command read from a variable
+or a file), a glob or escape inside the folder name itself (`~/.cl?ude/...`, `~/.cl\aude/...`; only tokens that spell
+`.claude` literally are caught), a wipe by absolute path with a bare `*` below a project or worktree name
+(`rm ~/.claude/projects/<p>/memory/*`, `rm -rf .../worktrees/w/*`) is gated although nothing there is config (a known false
+positive: use a cwd-relative `rm *`, a named file, or ask the operator), a `..` inside a path that holds a space (the token split cuts it), and **non-shell tools** (MCP
+servers other than the forwarding tools listed above, an editor's own save, a browser). Closed in round 3: an open grant no
+longer switches off the publish and forged-grant checks, `..` is collapsed in both guards, the grant is confirmed in the
+ledger, the spawned-claude check reads quote- and backtick-stripped text, globs and escapes, and the 8.3 short names of
+`CLAUDE.local.md`, `.mcp.json` and the ledger and anchor folders. Closed in round 2 (2026-10-13): the bare folder
+`~/.claude` (`claude-root`), a relative write after `cd` into a config folder, a config file copied into a folder, a path in
+one segment run by a later one, short names, quotes inside a path, the `git` upgrade abuse, an interactive `claude`
+handed a user-only command. The ledger, the
+hash chain and the outside anchor remain the other layers, and the Ledger shows the allowed changes.
 
 ### 6.5 The done-lock
 * **Version:** each task has `version`, +1 on every non-exempt `edit`. Exempt paths: anything under
   `~\.claude\` (memory, plans, skills, settings), the session's scratchpad / the system
-  temp dir, `<data>\`, and files whose name ends in `build-log.md` or `.notes.md`.
+  temp dir, `<data>\`, and files whose name ends in `build-log.md` or `.notes.md`, and scratch files: a name that starts with `scratch-` and ends in `.md`, a name that ends in
+  `.scratch.md`, or a `.md` / `.txt` file inside a folder named exactly `_scratch`. The path is normalised first;
+  names match case-insensitively, on whole path components. Never scratch: any path with a component starting
+  with `.` (`.claude`, `.github`), and the names `claude.md`, `claude.local.md`, `agent.md`, `agents.md`, `skill.md`,
+  `gemini.md`, `cmakelists.txt`, `requirements.txt`. A config path (§6.4c) is never recorded as an `edit` either: it is
+  gated instead.
+* **Path forms (2026-10-13).** Every path check looks at TWO forms of the path: the absolute one (`norm_path`) and the
+  real one (`realpath`, so junctions and symlinks are resolved; if it cannot be resolved the absolute form stands in),
+  and the same two forms of each root (ledger dir, hooks dirs, anchor clone, exempt dirs). Fail-safe: a path is
+  **protected** (ledger, hooks folders, anchor clone) when ANY form is under ANY form of a protected root, and is
+  **config** (§6.4c) when ANY form matches; it is **exempt** only when EVERY form is exempt on its own (so a junction
+  named `_scratch` that points at a source folder exempts nothing). NTFS alternate data streams: a path whose part after
+  the drive holds a `:` (`x.md:s`, `file::$DATA`) is NEVER exempt or scratch; for the protected and config checks the
+  stream suffix is stripped first (everything from the first `:` in the last component, and trailing dots and spaces), so
+  `CLAUDE.md:x` is config and `ledger\file:x` is protected. `norm_path` itself is unchanged.
 * **Closing:** PreToolUse `: team-done`: allowed when the task's type has `needs_check: false` and
   no edits, or `version == 0`, or a READY verdict (or ok check) exists at `version == current`.
   Otherwise refuse: `"Not closed: version <v> has no passing review (last READY at version <m>). Run
@@ -1032,10 +1281,10 @@ coding|writing|chore …)."`; PreToolUse Agent with any type other than `scout` 
 `atlas_config.json` → `"mode": "record"` or `"enforce"`. In **record** mode every guard computes its
 decision, logs it (`refusal` / `sendback` with `would: true`) and **allows** (no deny, no block).
 In **enforce** mode it denies/blocks and logs `would: false`. Exception in both modes: the model
-invoking `grant-rework`, `ack-break` or `allow-publish` is always denied, and so is a publish command without a grant (§6.4b). Switch: `py -3.12 tools/hooks_mode.py record|enforce`
+invoking `grant-rework`, `ack-break`, `allow-publish` or `allow-config` is always denied, and so are a publish command without a grant (§6.4b) and a config change without a grant (§6.4c). Switch: `py -3.12 tools/hooks_mode.py record|enforce`
 (edits the installed config, appends a `mode` event). Start = record. Enforce only after one full
 day of records shows no wrong refusal **and** at least one real reviewer verdict captured with the
-right version, and the interactive `CLAUDE_CODE_ENTRYPOINT` values recorded (Chief checks, logs the
+right version, and the interactive `CLAUDE_CODE_ENTRYPOINT` values recorded (the orchestrator checks, logs the
 evidence in the build log).
 
 ### 6.8 Areas/look check
@@ -1055,7 +1304,7 @@ Control on), sets the model explicitly, writes `ledger/auto/<marker>.json` (`{ma
 type, model, brief_sha, started}`) and makes the brief's first instruction the no-op
 `: team-auto <marker>` (logged as `auto`, §1.2) so the derivation can set `auto: true`, files the session in its
 area's sidebar group (`group` in `areas.yaml`). Result parked as a branch or draft, review estimate
-in the Chief's `: team-summary` (`review_min`). Never publishes, sends, pays, merges to main.
+in the orchestrator's `: team-summary` (`review_min`). Never publishes, sends, pays, merges to main.
 
 ---
 
@@ -1140,8 +1389,16 @@ session in `GET /api/v2/team` carries `plan_ref` and `plan_title`, both null whe
 `screens/plan*.js`. The week view is seven day columns of the operator's time (events, read-only project placements,
 scheduled reviews); the day view is a single "Calendar" lane. There is no agents column, no "Agents · lane N" rows, no
 agents drop target and no Owner choice in the new-task form (new tasks are `owner: me`). Since 2026-10-11 the screen does
-not create events and task cards are not dragged onto the calendar (events and task slots are planned from a session with
-`tools/plan_day.py`, §5.3); existing events drag, resize and open for edit. The Review tray stays: automatic results land there and "Schedule" puts a review into the operator's time.
+not create events on empty time (events and task slots are planned from a session with `tools/plan_day.py`, §5.3); existing events drag, resize and open for edit.
+*(2026-10-15)* The Review tray and the "Tasks per area" board are gone from the screen (the tray is parked on the server, §5.3). In their place the right
+column (same sticky 300 px column, stacked under the calendar below 1100 px) holds one **"To schedule" memo rail**: heading, the line "Ideas to schedule later.
+Drag one onto the calendar, or plan it from a session.", a quick add (title, area, estimate stepper, "Add" with its disabled reason shown as text;
+posts `task` as `owner: me`, `state: todo`), then the list. A memo is a `tasks.yaml` task (project `plan.yaml` tasks are not shown) whose state is not `done` and whose
+linked event is not done (`planned.done`); open memos first, then scheduled ones, each in payload order. A row shows the area colour dot and short tag, the title,
+the estimate (`1h`, `30m`) and a "Remove" text button (`task/state` to `done`). An open memo drags onto the week or day calendar (`task/place`, start snapped
+like event drags, optimistic with undo and the server's reason as visible text on a refusal). A scheduled memo (`planned.on == "me"`) stays in the list at reduced opacity,
+shows `planned <Ddd DD> HH:MM` instead of the estimate and can be dragged again, which moves its linked event. It leaves the list when its event is marked done or
+its state is `done`; deleting the event makes it open again. The app bar no longer shows the pending-review chip (`/api/v2/attention` still carries `pending_reviews`, §5.1).
 The legend and the card heading say nothing about agents. Parked until scheduled automatic starts exist (§5.3).
 
 ### 8.5 Ledger screen
@@ -1174,7 +1431,7 @@ the two KPIs "Caught by the checks" and "Weighted usage" carry a muted subtitle.
 
 ---
 
-## 9. Wave 0 seam and stubs (written by the Chief before the lanes start)
+## 9. Wave 0 seam and stubs (written by the orchestrator before the lanes start)
 
 * `cockpit/server.py`: `/api/v2/*` → `api_v2.handle_get/handle_post`; static (non-`/api/`, non-`/v1/`)
   → `web2_static.serve`; `/v1/*` was served from the old `cockpit/web` files until it was removed on 2026-10-10; `ATLAS_NO_INBOX_SYNC=1` is read by the optional private panels (not included in this copy).
@@ -1193,7 +1450,7 @@ the two KPIs "Caught by the checks" and "Weighted usage" carry a muted subtitle.
 * Tests live next to the code (`cockpit/ledger2/test_*.py`, `cockpit/plan/test_*.py`,
   `hooks/test_*.py`, `cockpit/test_web2_static.py`, `tools/test_check_look.py`) and run with
   `py -3.12 -m pytest -q <folder>`. Front-end logic that can be tested without a browser (formatters,
-  lane assignment) lives in plain functions with tests; screens are checked in the browser by the Chief.
+  lane assignment) lives in plain functions with tests; screens are checked in the browser by the orchestrator.
 * Tests NEVER write to `<data>`, `~\.claude`, the live `<repo>`, or
   `schedule.yaml`/`tasks.yaml` in the repo: they use temp dirs via the env overrides
   (`ATLAS_LEDGER2_DIR`, `ATLAS_SCHEDULE_FILE`, `ATLAS_TASKS_FILE`, `ATLAS_PLAN_VERSION_FILE`,

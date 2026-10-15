@@ -164,7 +164,6 @@ function paintAttention(a) {
   document.getElementById("ab-working-t").textContent = a.working + (a.working === 1 ? " session working" : " sessions working");
   document.getElementById("ab-waiting").hidden = !(a.waiting > 0);
   document.getElementById("ab-waiting-t").textContent = a.waiting + " waiting";
-  document.getElementById("ab-review-t").textContent = a.pending_reviews + " pending review";
 }
 
 let areaPolls = 0;

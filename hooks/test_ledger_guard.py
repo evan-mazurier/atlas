@@ -126,6 +126,7 @@ def test_bypass_matched_is_clipped_to_60_chars(env):
     "py -3.12 tools/anchor_ledger.py --ledger D:/AI/atlas-data/ledger --dry-run",
 ])
 def test_documented_tools_are_not_denied(env, cmd):
+    env.run("UserPromptSubmit", prompt="/allow-config")      # install_hooks.py also needs the config gate's OK (6.4c)
     assert not denied(sh(env, cmd, cwd=ATLAS))                # a relative tools/x.py needs the Atlas checkout as cwd
     assert env.events("bypass_attempt") == []
 

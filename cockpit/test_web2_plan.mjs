@@ -192,34 +192,22 @@ test("addEvent sets the occurrence and defaults; renameId swaps a temporary id",
   assert.equal(C.renameId(e, "evt_tmp2", "evt_real")[0].id, "evt_real");
 });
 
-test("tasks: grouping by state, state change, add, remove, rename", () => {
-  const list = [{ id: "1", state: "todo" }, { id: "2", state: "done" }, { id: "3", state: "weird" }, { id: "4", state: "doing" }];
-  const g = C.groupTasks(list);
-  assert.deepEqual(g.todo.map((t) => t.id), ["1", "3"]);
-  assert.deepEqual(g.done.map((t) => t.id), ["2"]);
-  assert.deepEqual(Object.keys(g), C.STATES);
+test("tasks: state change, add, remove, rename, planned", () => {
   const tasks = { md: [{ id: "1", state: "todo", area: "md" }], job: [] };
   assert.equal(C.setTaskState(tasks, "1", "next").md[0].state, "next");
   assert.equal(tasks.md[0].state, "todo");
   assert.equal(C.addTask(tasks, { id: "9", area: "job" }).job.length, 1);
   assert.equal(C.removeTask(tasks, "1").md.length, 0);
   assert.equal(C.renameTask(tasks, "1", "x").md[0].id, "x");
+  const p = C.setPlanned(tasks, "1", { day: "2026-10-12", start: "10:00", end: "11:00", on: "me" });
+  assert.equal(p.md[0].planned.start, "10:00");
+  assert.equal(tasks.md[0].planned, undefined);
+  assert.equal(C.setPlanned(p, "1", null).md[0].planned, undefined);
   assert.equal(C.isReadOnlyTask({ id: "proj/t1", source: "plan.yaml" }), true);
   assert.equal(C.isReadOnlyTask({ id: "t_ab12", source: "tasks.yaml" }), false);
   assert.equal(C.fmtEstimate(30), "30 min");
   assert.equal(C.fmtEstimate(60), "1 h");
   assert.equal(C.fmtEstimate(150), "2 h 30");
-});
-
-test("review tray: length rounds up to the grid; scheduled marks and removal", () => {
-  assert.equal(C.reviewLen({ review_min: 25 }), 30);
-  assert.equal(C.reviewLen({ review_min: 15 }), 15);
-  assert.equal(C.reviewLen({}), 30);
-  const tray = [{ id: "rv_1", scheduled: null }, { id: "rv_2", scheduled: null }];
-  const m = C.markScheduled(tray, "rv_1", { day: "2026-10-09", start: "10:00", end: "10:30" });
-  assert.equal(m[0].scheduled.start, "10:00");
-  assert.equal(tray[0].scheduled, null);
-  assert.deepEqual(C.removeTray(tray, "rv_1").map((t) => t.id), ["rv_2"]);
 });
 
 test("mineBlocks picks one day; all-day events are separate", () => {
@@ -270,24 +258,52 @@ test("patchSeries with no start key leaves the series times alone", () => {
   assert.equal(p[0].end, "08:00");
 });
 
-/* ---------- tasks: grouping by state, placing ---------- */
-test("tasksByState: five columns in state order, hidden areas left out, area kept", () => {
-  const tasks = { md: [{ id: "1", state: "todo" }, { id: "2", state: "doing" }], job: [{ id: "3", state: "todo" }, { id: "4", state: "review" }], train: [{ id: "5", state: "done" }] };
-  const areas = [{ id: "md" }, { id: "job" }, { id: "train" }];
-  const g = C.tasksByState(tasks, areas, {});
-  assert.deepEqual(Object.keys(g), ["todo", "next", "doing", "review", "done"]);
-  assert.deepEqual(g.todo.map((t) => t.id + t.area), ["1md", "3job"]);
-  assert.deepEqual(g.review.map((t) => t.id), ["4"]);
-  const h = C.tasksByState(tasks, areas, { job: true });
-  assert.deepEqual(h.todo.map((t) => t.id), ["1"]);
-  assert.equal(h.review.length, 0);
-  assert.equal(C.STATE_LABELS.review, "Pending review");
+/* ---------- the To schedule memo rail ---------- */
+test("memo list: tasks.yaml only, no done task, no done event; open first, then scheduled, payload order kept", () => {
+  const tasks = {
+    md: [
+      { id: "a", source: "tasks.yaml", state: "todo", planned: { day: "2026-10-12", start: "10:00", end: "11:00", on: "me" } },
+      { id: "b", source: "tasks.yaml", state: "next" },
+      { id: "p/1", source: "plan.yaml", state: "todo" },
+      { id: "c", source: "tasks.yaml", state: "done" },
+      { id: "d", source: "tasks.yaml", state: "todo", planned: { day: "2026-10-12", start: "12:00", end: "13:00", on: "me", done: true } },
+    ],
+    job: [
+      { id: "e", source: "tasks.yaml", state: "todo" },
+      { id: "f", source: "tasks.yaml", state: "doing", owner: "agents", planned: { day: "2026-10-12", start: "09:00", end: "10:00", on: "agents" } },
+      { id: "g", source: "tasks.yaml", state: "todo", planned: { day: "2026-10-13", start: "09:00", end: "10:00", on: "me" } },
+    ],
+  };
+  const m = C.memoList(tasks);
+  assert.deepEqual(m.map((t) => t.id), ["b", "e", "f", "a", "g"]);       // an agents-lane slot is not a calendar slot: still open
+  assert.deepEqual(m.map((t) => t.area), ["md", "job", "job", "md", "job"]);
+  assert.equal(C.isScheduledMemo(m[3]), true);
+  assert.equal(C.isScheduledMemo(m[0]), false);
+  assert.deepEqual(C.memoList({}), []);
+  assert.deepEqual(C.memoList(null), []);
 });
 
-test("plannedLabel", () => {
-  assert.equal(C.plannedLabel({ day: "2026-10-12", start: "10:00", end: "11:30" }), "planned Mon 10:00");
-  assert.equal(C.plannedLabel(null), "");
-  assert.equal(C.plannedLabel({ day: "bad", start: "10:00" }), "");
+test("memo estimate and length: 60 minutes when missing", () => {
+  assert.equal(C.fmtMemoEst(30), "30m");
+  assert.equal(C.fmtMemoEst(60), "1h");
+  assert.equal(C.fmtMemoEst(90), "1h30");
+  assert.equal(C.fmtMemoEst(125), "2h05");
+  assert.equal(C.fmtMemoEst(null), "");
+  assert.equal(C.fmtMemoEst(0), "");
+  assert.equal(C.memoLen({ estimate_min: 45 }), 45);
+  assert.equal(C.memoLen({}), 60);
+  assert.equal(C.memoLen({ estimate_min: null }), 60);
+});
+
+test("memoPlannedLabel: day name, day number, start", () => {
+  assert.equal(C.memoPlannedLabel({ day: "2026-10-12", start: "10:00", end: "11:30", on: "me" }), "planned Mon 12 10:00");
+  assert.equal(C.memoPlannedLabel(null), "");
+  assert.equal(C.memoPlannedLabel({ day: "bad", start: "10:00" }), "");
+});
+
+test("the review tray and the per-area board helpers are gone from plan-core", () => {
+  ["reviewLen", "markScheduled", "removeTray", "groupTasks", "tasksByState", "unassignedTasks", "plannedLabel", "STATES", "STATE_LABELS"]
+    .forEach((n) => assert.equal(C[n], undefined, n));
 });
 
 test("the agents' lane is parked: no agents helpers are exported from plan-core", () => {
@@ -308,15 +324,4 @@ test("areaVar: a known area gets its token, an unknown or empty id the neutral U
   assert.equal(C.areaVar(areas, "md"), "var(--ctx-2)");
   assert.equal(C.areaVar(areas, null), "var(--ctx-2)");
   assert.equal(C.areaVar(areas, undefined), "var(--ctx-2)");
-});
-
-test("unassignedTasks and tasksByState: tasks under an unknown area appear as Unassigned, after the known areas", () => {
-  const areas = [{ id: "job" }];
-  const tasks = { job: [{ id: "a", state: "todo" }], md: [{ id: "b", state: "todo" }, { id: "c", state: "done" }], zz: [] };
-  const u = C.unassignedTasks(tasks, areas);
-  assert.deepEqual(u.map((t) => [t.id, t.area]), [["b", "md"], ["c", "md"]]);
-  const g = C.tasksByState(tasks, areas, { job: true });
-  assert.deepEqual(g.todo.map((t) => t.id), ["b"]);       // hiding a known area never hides Unassigned
-  assert.deepEqual(g.done.map((t) => t.id), ["c"]);
-  assert.deepEqual(C.tasksByState(tasks, areas, {}).todo.map((t) => t.id), ["a", "b"]);
 });

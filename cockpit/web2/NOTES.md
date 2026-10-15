@@ -2,7 +2,7 @@
 
 Decisions where docs/v2/contracts.md left something open, or could not be met as written.
 
-1. **Colour check (contract §4.1, amended by the Chief).** `tools/check_look.py` ports the five checks of
+1. **Colour check (contract §4.1, amended by the orchestrator).** `tools/check_look.py` ports the five checks of
    `tools/vendor/validate_palette.js` (dark mode, adjacent pairs, surface = look.css `--bg`) to Python with the
    validator's constants and math; `tools/test_check_look.py` runs the vendored JS with node and asserts identical
    pass/warn/fail per check. The Machado/CIEDE2000 rule and the 3.0 threshold were dropped. The six approved

@@ -200,7 +200,7 @@ def numbers_md(r: dict) -> str:
         f"- Unverified tasks (edited, never checked): {len(r['unverified'])}"
         + (f" ({', '.join(r['unverified'])})" if r["unverified"] else ""), "",
         "### Waste signals", "",
-        f"- Chief doing helper-sized work (main-session edits on tasks that had builders available): "
+        f"- Orchestrator doing helper-sized work (main-session edits on tasks that had builders available): "
         f"{len(w['chief_helper_sized_work'])} task(s)"
         + "".join(f"\n  - {c['task']} ({c['type']}, {c['area']}): {c['main_edits']} main-session edits"
                   for c in w["chief_helper_sized_work"]),

@@ -1,10 +1,10 @@
 ---
 name: launch-auto
-description: The Chief's procedure to start one automatic Claude Code session (a scheduled-task run) for a piece of work, with the boundary, crew and rework budget baked in. Parks the result for the operator's review.
+description: The orchestrator's procedure to start one automatic Claude Code session (a scheduled-task run) for a piece of work, with the boundary, crew and rework budget baked in. Parks the result for the operator's review.
 argument-hint: "<area> <type> <what to build>"
 ---
 
-You are the Chief. The operator asked for work to run on its own, or a playbook decided it. One piece of work =
+You are the orchestrator. The operator asked for work to run on its own, or a playbook decided it. One piece of work =
 one automatic session. Only reversible work qualifies (branches, drafts, unpublished pages, research notes).
 Refuse and tell the operator if the work needs a publish, send, payment, signature, merge to main or contact with
 anyone, or if its type is `legal` or `quick-question`: those are never run alone. The launcher also refuses the types `undeclared`
@@ -42,8 +42,8 @@ which step could not be done, and say it in your final message to the operator.
    folder is closed to Edit/Write by design, so never edit the marker by hand.
 7. **Wait for the result.** When the session reports its result parked (branch or file named, and its
    `: team-summary` carrying `review_min`), send ONE phone notification with the push notification tool:
-   `<title>: ready for review, ~<N> min`. One per session, never a stream. The session shows in the review
-   tray by itself (the ledger drives it). If the session fails or stalls, notify once with the reason
+   `<title>: ready for review, ~<N> min`. One per session, never a stream. The operator reviews it in the session
+   itself (the Plan's review tray is parked since 2026-10-15). If the session fails or stalls, notify once with the reason
    instead, and do not relaunch without telling the operator.
 8. **After the operator's review:** try the session archive tool to archive the session. If it is blocked or
    missing, record that in the build log; the app archives sessions idle for 7 days anyway. The ledger

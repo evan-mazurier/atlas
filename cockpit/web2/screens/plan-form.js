@@ -1,7 +1,7 @@
-/* Plan screen: the event form (create, edit, schedule a review) and the "this one / the series" chooser.
+/* Plan screen: the event form (edit) and the "this one / the series" chooser.
    Built from kit/ui controls; the values live in `S.form`, so a poll repaint never touches an open form. */
 import {
-  buildRecur, EDIT_MIN, EDIT_MAX, SNAP, fromMin, toMin, dayNum, dayFromNum, dayShort, reviewLen, clamp, snap, allDayTitleOn,
+  buildRecur, EDIT_MIN, EDIT_MAX, SNAP, fromMin, toMin, dayNum, dayFromNum, dayShort, clamp, allDayTitleOn,
 } from "./plan-core.js";
 
 function mk(tag, cls, text, parent) {
@@ -45,12 +45,7 @@ export function openChooser(P, o) {
   S.chooser = box;
 }
 
-function nextQuarter() {
-  const d = new Date();
-  return clamp(snap(d.getHours() * 60 + d.getMinutes() + 7), EDIT_MIN, EDIT_MAX - 60);
-}
-
-/** o = {mode: 'edit', ev} | {mode: 'review', item, day?}  (events are created from a session, not on the screen) */
+/** o = {mode: 'edit', ev}  (events are created from a session, not on the screen) */
 export function openEventForm(P, o) {
   const { S, ctx } = P;
   const ui = ctx.ui;
@@ -58,23 +53,18 @@ export function openEventForm(P, o) {
   const today = dayNum(P.today());
   const lo = today - NOW_DAYS_BACK, hi = today + NOW_DAYS_FWD;
   const ev = o.mode === "edit" ? o.ev : null;
-  const item = o.mode === "review" ? o.item : null;
   const recurring = !!(ev && ev.recur);
   const day0 = ev ? ev.day : (o.day || S.day);
   let s0 = ev && ev.start ? toMin(ev.start) : o.start;
   let e0 = ev && ev.end ? toMin(ev.end) : o.end;
-  if (item) {
-    if (item.scheduled && item.scheduled.start) { s0 = toMin(item.scheduled.start); e0 = toMin(item.scheduled.end); }
-    else { s0 = o.day && o.day === P.today() ? nextQuarter() : 540; e0 = s0 + reviewLen(item); }
-  }
   if (s0 == null) { s0 = 540; e0 = 600; }
   if (e0 == null) e0 = s0 + 60;
   const f = S.form = {
-    mode: o.mode, ev, item,
+    mode: o.mode, ev,
     scope: recurring ? "occurrence" : "series",
-    title: item ? "Review: " + item.title : (ev ? ev.title : ""),
-    area: item ? (item.area || "") : (ev ? (ev.area || "") : ""),
-    day: dayNum(item && item.scheduled ? item.scheduled.day : day0),
+    title: ev ? ev.title : "",
+    area: ev ? (ev.area || "") : "",
+    day: dayNum(day0),
     allDay: !!(ev && !ev.start),
     start: clamp(s0, EDIT_MIN, EDIT_MAX - SNAP),
     end: clamp(e0, EDIT_MIN + SNAP, EDIT_MAX),
@@ -97,7 +87,7 @@ export function openEventForm(P, o) {
   root.setAttribute("aria-modal", "true");
   root.tabIndex = -1;
   const head = mk("div", "plan-form-h", null, root);
-  mk("b", null, item ? "Schedule review" : "Edit event", head);
+  mk("b", null, "Edit event", head);
   const x = mk("button", "plan-link", "Close", head);
   x.type = "button";
   x.addEventListener("click", () => closeForm(P));
@@ -115,17 +105,12 @@ export function openEventForm(P, o) {
     });
   }
 
-  let titleF = null, notesF = null, areaDD = null;
-  if (item) {
-    mk("div", "plan-ftitle", f.title, body);
-  } else {
-    titleF = ui.field(row("Title"), { label: "", value: f.title, onInput: (v) => { f.title = v; sync(); }, placeholder: "What happens" });
-    areaDD = ui.dropdown(row("Area"), {
-      items: [{ value: "", label: "No area" }].concat(ctx.areas.map((a) => ({ value: a.id, label: a.name }))),
-      value: f.area,
-      onChange: (v) => { f.area = v; },
-    });
-  }
+  const titleF = ui.field(row("Title"), { label: "", value: f.title, onInput: (v) => { f.title = v; sync(); }, placeholder: "What happens" });
+  const areaDD = ui.dropdown(row("Area"), {
+    items: [{ value: "", label: "No area" }].concat(ctx.areas.map((a) => ({ value: a.id, label: a.name }))),
+    value: f.area,
+    onChange: (v) => { f.area = v; },
+  });
 
   const dayStep = ui.stepper(row("Day"), {
     value: f.day, min: lo, max: hi, step: 1, format: (v) => dayShort(dayFromNum(v)),
@@ -133,14 +118,11 @@ export function openEventForm(P, o) {
   });
   const dayNote = mk("div", "plan-fnote", "", body);
 
-  let kindSeg = null;
-  if (!item) {
-    kindSeg = ui.segmented(row("Time"), {
-      options: [{ value: "timed", label: "Timed" }, { value: "all", label: "All day" }],
-      value: f.allDay ? "all" : "timed",
-      onChange: (v) => { f.timeTouched = true; f.allDay = v === "all"; sync(); },
-    });
-  }
+  ui.segmented(row("Time"), {
+    options: [{ value: "timed", label: "Timed" }, { value: "all", label: "All day" }],
+    value: f.allDay ? "all" : "timed",
+    onChange: (v) => { f.timeTouched = true; f.allDay = v === "all"; sync(); },
+  });
   const startRow = row("Start", "plan-ftime");
   const startStep = ui.stepper(startRow, {
     value: f.start, min: EDIT_MIN, max: EDIT_MAX - SNAP, step: SNAP, format: fromMin,
@@ -152,30 +134,27 @@ export function openEventForm(P, o) {
     onChange: (v) => { f.timeTouched = true; f.end = v; if (f.start >= v) { f.start = v - SNAP; startStep.set(f.start); } sync(); },
   });
 
-  let repSeg = null, untilSeg = null, untilStep = null, repRows = [];
-  if (!item) {
-    notesF = ui.field(row("Notes"), { label: "", value: f.notes, onInput: (v) => { f.notes = v; }, placeholder: "Optional" });
-    repSeg = ui.segmented(row("Repeat"), {
-      options: [{ value: "none", label: "None" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }].concat(f.repeat === "other" ? [{ value: "other", label: "Keep as is" }] : []),
-      value: f.repeat,
-      onChange: (v) => { f.repTouched = true; f.repeat = v; sync(); },
-    });
-    const ur = row("Until");
-    untilSeg = ui.segmented(ur, {
-      options: [{ value: "never", label: "No end" }, { value: "until", label: "Until" }],
-      value: f.until == null ? "never" : "until",
-      onChange: (v) => { f.repTouched = true; f.until = v === "never" ? null : Math.max(f.day, f.until || f.day + 28); untilStep.set(f.until || f.day); sync(); },
-    });
-    untilStep = ui.stepper(ur, {
-      value: f.until || f.day, min: lo, max: hi + 400, step: 1, format: (v) => dayShort(dayFromNum(v)),
-      onChange: (v) => { f.repTouched = true; f.until = v; },
-    });
-    repRows = [ur.parentNode];
-  }
+  const notesF = ui.field(row("Notes"), { label: "", value: f.notes, onInput: (v) => { f.notes = v; }, placeholder: "Optional" });
+  const repSeg = ui.segmented(row("Repeat"), {
+    options: [{ value: "none", label: "None" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }].concat(f.repeat === "other" ? [{ value: "other", label: "Keep as is" }] : []),
+    value: f.repeat,
+    onChange: (v) => { f.repTouched = true; f.repeat = v; sync(); },
+  });
+  const ur = row("Until");
+  const untilSeg = ui.segmented(ur, {
+    options: [{ value: "never", label: "No end" }, { value: "until", label: "Until" }],
+    value: f.until == null ? "never" : "until",
+    onChange: (v) => { f.repTouched = true; f.until = v === "never" ? null : Math.max(f.day, f.until || f.day + 28); untilStep.set(f.until || f.day); sync(); },
+  });
+  const untilStep = ui.stepper(ur, {
+    value: f.until || f.day, min: lo, max: hi + 400, step: 1, format: (v) => dayShort(dayFromNum(v)),
+    onChange: (v) => { f.repTouched = true; f.until = v; },
+  });
+  const repRows = [ur.parentNode];
 
   const errLine = mk("div", "plan-ferr", "", body);
   const foot = mk("div", "plan-form-f", null, root);
-  const save = ui.button(foot, { label: item ? "Schedule" : "Save", onClick: submit });
+  const save = ui.button(foot, { label: "Save", onClick: submit });
   ui.button(foot, { label: "Cancel", onClick: () => closeForm(P) });
   let del = null;
   if (ev) {
@@ -213,12 +192,12 @@ export function openEventForm(P, o) {
     const occ = recurring && f.scope === "occurrence";
     startRow.parentNode.hidden = !timed;
     endRow.parentNode.hidden = !timed;
-    if (titleF) { titleF.el.disabled = occ; }
-    if (notesF) { notesF.el.disabled = occ; }
-    if (areaDD) areaDD.el.classList.toggle("dis", occ);
-    if (repSeg) repSeg.el.classList.toggle("dis", occ);
-    if (untilSeg) untilSeg.el.classList.toggle("dis", occ);
-    if (untilStep) untilStep.el.classList.toggle("dis", occ);
+    titleF.el.disabled = occ;
+    notesF.el.disabled = occ;
+    areaDD.el.classList.toggle("dis", occ);
+    repSeg.el.classList.toggle("dis", occ);
+    untilSeg.el.classList.toggle("dis", occ);
+    untilStep.el.classList.toggle("dis", occ);
     repRows.forEach((r) => { r.hidden = !(f.repeat !== "none"); });
     const fixedDay = recurring && f.scope === "series";
     dayStep.el.classList.toggle("dis", fixedDay);
@@ -226,10 +205,10 @@ export function openEventForm(P, o) {
     dayNote.textContent = (fixedDay ? "The series keeps its start day. Choose This occurrence to move one date." : "") + timeNote;
     dayNote.hidden = !dayNote.textContent;
     let why = "";
-    if (!item && !f.title.trim() && !occ) why = "A title is needed.";
+    if (!f.title.trim() && !occ) why = "A title is needed.";
     // a day that already has an all-day event takes no new event (the engine refuses it too)
     const dayIso = dayFromNum(f.day);
-    const arriving = item ? !(item.scheduled && item.scheduled.day === dayIso) : (!ev || ev.day !== dayIso);
+    const arriving = !ev || ev.day !== dayIso;
     const blocker = arriving && !occ ? allDayTitleOn(S.data.events, dayIso, ev ? ev.id : null) : "";
     if (!why && blocker) why = dayShort(dayIso) + " already has the all-day event '" + blocker + "'. Choose another day.";
     save.setDisabled(!!why, why);
@@ -247,13 +226,8 @@ export function openEventForm(P, o) {
     const vals = { title: f.title.trim(), area: f.area || null, notes: (f.notes || "").trim() || null, day, start: timed ? f.start : null, end: timed ? f.end : null };
     // a series keeps its own times unless they were changed here (the form shows the occurrence's time, which may be an override)
     if (recurring && !occ && !f.timeTouched) { delete vals.start; delete vals.end; vals.start = undefined; vals.end = undefined; }
-    if (item) {
-      closeForm(P);
-      P.act.scheduleReview(item, day, f.start, f.end);
-      return;
-    }
     if (!vals.title && !occ) return;
-    if (repSeg && f.repTouched) {              // untouched Repeat: `recur` is not sent, the stored one stays as is
+    if (f.repTouched) {              // untouched Repeat: `recur` is not sent, the stored one stays as is
       if (f.repeat === "none") vals.recur = null;
       else if (f.repeat === "other") vals.recur = ev.recur;
       else {

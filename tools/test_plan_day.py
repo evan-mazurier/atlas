@@ -180,3 +180,45 @@ def test_done_and_undone_ops(server, capsys, tmp_path):
     assert run(server, capsys, "apply", write_ops(tmp_path, [{"op": "undone", "id": eid}]))[0] == 0
     line = run(server, capsys, "show", "--day", DAY)[1].out.strip().split("\n")[0]
     assert line.split("\t")[5:] == ["Marked"]
+
+
+def test_memo_and_place_ops_and_memos_command(server, capsys, tmp_path):
+    assert pd.build_request({"op": "memo", "title": "Call bank", "area": "pers", "estimate_min": 30}) == (
+        "task", {"task": {"area": "pers", "title": "Call bank", "owner": "me", "state": "todo", "estimate_min": 30}})
+    assert pd.build_request({"op": "place", "task": "t_1", "day": DAY, "start": "09:00"}) == (
+        "task/place", {"id": "t_1", "target": "me", "day": DAY, "start": "09:00"})
+    for bad in ({"op": "memo", "title": "x"}, {"op": "memo", "area": "md"}, {"op": "place", "task": "t", "day": DAY}):
+        with pytest.raises(pd.PlanDayError):
+            pd.build_request(bad)
+    ops = [{"op": "memo", "title": "Write pitch", "area": "md", "estimate_min": 90},
+           {"op": "memo", "title": "No estimate", "area": "atlas"}]
+    code, out = run(server, capsys, "apply", write_ops(tmp_path, ops))
+    assert code == 0 and "1. memo ok t_" in out.out
+    rows = [ln.split("\t") for ln in run(server, capsys, "memos")[1].out.strip().splitlines()]
+    assert [(r[1], r[2], r[3], r[4]) for r in rows] == [("MD", "90", "open", "Write pitch"), ("ATL", "", "open", "No estimate")]
+    pitch, bare = rows[0][0], rows[1][0]
+    # end defaults to start + estimate (90 min), or 60 min when the task has none
+    ops = [{"op": "place", "task": pitch, "day": DAY, "start": "09:00"},
+           {"op": "place", "task": bare, "day": DAY, "start": "13:00"}]
+    assert run(server, capsys, "apply", write_ops(tmp_path, ops))[0] == 0
+    shown = run(server, capsys, "show", "--day", DAY)[1].out
+    assert "09:00-10:30\tMD" in shown and "13:00-14:00\tATL" in shown
+    rows = [ln.split("\t") for ln in run(server, capsys, "memos")[1].out.strip().splitlines()]
+    assert [r[3] for r in rows] == [f"planned {DAY} 09:00", f"planned {DAY} 13:00"]
+    # an explicit end is kept; placing again moves the same event
+    ops = [{"op": "place", "task": pitch, "day": DAY, "start": "15:00", "end": "15:30"}]
+    assert run(server, capsys, "apply", write_ops(tmp_path, ops))[0] == 0
+    assert run(server, capsys, "show", "--day", DAY)[1].out.count("Write pitch") == 1
+    # a done event takes the memo off the list
+    eid = [ln.split("\t")[4] for ln in run(server, capsys, "show", "--day", DAY)[1].out.splitlines() if "Write pitch" in ln][0]
+    assert run(server, capsys, "apply", write_ops(tmp_path, [{"op": "done", "id": eid}]))[0] == 0
+    assert [ln.split("\t")[4] for ln in run(server, capsys, "memos")[1].out.strip().splitlines()] == ["No estimate"]
+
+
+def test_place_refusal_is_printed_and_dry_run_shows_the_end_rule(server, capsys, tmp_path):
+    ops = [{"op": "place", "task": "t_missing", "day": DAY, "start": "09:00"}]
+    code, out = run(server, capsys, "apply", write_ops(tmp_path, ops))
+    assert code == 1 and "unknown task" in out.out
+    n = len(server.seen)
+    code, out = run(server, capsys, "apply", write_ops(tmp_path, ops), "--dry-run")
+    assert code == 0 and "task/place" in out.out and "start + estimate_min" in out.out and len(server.seen) == n

@@ -1,5 +1,7 @@
 """team_events.py: the optional area word of `: team-type <type> <area>` is recorded."""
 import json
+
+import pytest
 import os
 import subprocess
 import sys
@@ -57,10 +59,17 @@ def test_team_done_is_logged_bare(tmp_path):
     assert set(recs[-1]) == {"ts", "ev", "sid", "cwd"}
 
 
-def test_team_done_with_extra_words_or_too_long_is_not_logged(tmp_path):
-    assert _run(tmp_path, ": team-done now") == []
-    assert _run(tmp_path, ": team-done" + " " * 300) == []
-    assert _run(tmp_path, "echo : team-done") == []
+@pytest.mark.parametrize("cmd", [": team-done now", ": team-done" + " " * 300, ": team-done\necho more", ": team-done\r\nls",
+                                 ":team-done; echo x", "  : TEAM-DONE  # closing"])
+def test_team_done_matches_the_first_line_like_the_hook(tmp_path, cmd):
+    recs = _run(tmp_path, cmd)
+    assert recs and recs[-1]["ev"] == "TeamDone"
+
+
+@pytest.mark.parametrize("cmd", ["echo : team-done", "echo hi\n: team-done", ": team-doner", ": team-done_x", "team-done",
+                                 "x" * 300 + " : team-done"])
+def test_team_done_needs_the_first_line_to_start_with_it(tmp_path, cmd):
+    assert _run(tmp_path, cmd) == []
 
 
 def test_team_done_from_a_helper_is_not_logged(tmp_path):

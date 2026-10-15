@@ -1,11 +1,11 @@
-/* Plan screen (docs/v2/contracts.md §5.3, §8): two timelines, review tray, tasks per area, instant edits.
+/* Plan screen (docs/v2/contracts.md §5.3, §8): two timelines, the To schedule memo rail, instant edits.
    The screen changes first and saves in the background (one save at a time, each carrying `base`);
    answers older than one already seen are ignored. Control values live in module state `S`, so the
    15 s poll never clobbers an open form or a drag in progress. Rules for the pure parts: plan-core.js. */
 import * as C from "./plan-core.js";
 import { renderTime, stopFit } from "./plan-time.js";
 import { openEventForm, closeForm, openChooser } from "./plan-form.js";
-import { renderTray, renderTasks, buildTaskAdd, buildTaskControls } from "./plan-side.js";
+import { buildMemoRail, renderMemos } from "./plan-side.js";
 import { sampleOverlay } from "./plan-sample.js";
 
 let S = null;
@@ -44,10 +44,7 @@ function freshState(ctx) {
     noticeTimer: 0,
     tmp: 0,
     idMap: {},            // temporary id -> real id, after a create was saved
-    doneOpen: {},         // area id -> show the done tasks
-    taskForm: { title: "", area: "", estimate: 60 },
-    taskGroup: "area",    // "area" | "state": how the tasks panel is laid out
-    hiddenAreas: {},      // area id -> hidden in the tasks panel
+    taskForm: { title: "", area: "", estimate: 60 },   // the memo quick-add block
     sample: ctx.query.get("sample") === "1" || new URLSearchParams(h).get("sample") === "1",
     els: {},
   };
@@ -239,40 +236,30 @@ const act = {
     });
   },
 
-  /** Put a review from the tray into the calendar. */
-  scheduleReview(item, day, startMin, endMin) {
-    if (item.sample) { setNotice("Sample data, not saved.", "warn"); return; }
-    const tmp = newTmp("evt");
+  /** Drop a memo on the calendar: creates its linked event, or moves it when the memo is already scheduled. */
+  placeMemo(task, day, startMin, endMin) {
+    if (task.sample) { setNotice("Sample data, not saved.", "warn"); return; }
     const start = C.fromMin(startMin), end = C.fromMin(endMin);
-    const before = item.scheduled;
-    const evs = S.data.events.filter((e) => e.review_of === item.task_id);
+    const prev = task.planned || null;
+    const linked = S.data.events.filter((e) => e.task_of === task.id).slice(0, 1);
+    const tmp = linked.length ? null : newTmp("evt");
     enqueue({
-      what: "review",
+      what: "place",
       apply: (d) => {
-        const rest = d.events.filter((e) => e.review_of !== item.task_id);
-        const ev = { id: evs.length ? evs[0].id : tmp, title: "Review: " + item.title, day, start, end, area: item.area, review_of: item.task_id };
-        return Object.assign({}, d, { events: C.addEvent(rest, ev), review_tray: C.markScheduled(d.review_tray, item.id, { event: ev.id, day, start, end }) });
+        const events = linked.length
+          ? d.events.map((e) => (e.id === linked[0].id ? Object.assign({}, e, { day, occurrence: day, start, end }) : e))
+          : C.addEvent(d.events, { id: tmp, title: task.title, day, start, end, area: task.area, task_of: task.id });
+        return Object.assign({}, d, { events, tasks: C.setPlanned(d.tasks || {}, task.id, { day, start, end, on: "me" }) });
       },
       undo: (d) => Object.assign({}, d, {
-        events: d.events.filter((e) => e.review_of !== item.task_id).concat(evs),
-        review_tray: C.markScheduled(d.review_tray, item.id, before || null),
+        events: linked.length ? C.restoreEvents(d.events, linked[0].id, linked) : d.events.filter((e) => e.id !== tmp),
+        tasks: C.setPlanned(d.tasks || {}, task.id, prev),
       }),
-      call: () => ({ path: "/api/v2/plan/review/schedule", body: { id: item.id, day, start, end } }),
+      call: () => ({ path: "/api/v2/plan/task/place", body: { id: real(task.id), target: "me", day, start, end } }),
       after: (r) => {
         const id = r.changed && r.changed.id;
-        if (id && !evs.length) { S.idMap[tmp] = id; S.data = Object.assign({}, S.data, { events: C.renameId(S.data.events, tmp, id) }); }
+        if (tmp && id) { S.idMap[tmp] = id; S.data = Object.assign({}, S.data, { events: C.renameId(S.data.events, tmp, id) }); }
       },
-    });
-  },
-
-  reviewDone(item) {
-    if (item.sample) { setNotice("Sample data, not saved.", "warn"); return; }
-    const saved = S.data.review_tray;
-    enqueue({
-      what: "reviewed",
-      apply: (d) => Object.assign({}, d, { review_tray: C.removeTray(d.review_tray, item.id) }),
-      undo: (d) => Object.assign({}, d, { review_tray: saved }),
-      call: () => ({ path: "/api/v2/plan/review/done", body: { id: item.id } }),
     });
   },
 
@@ -354,8 +341,7 @@ function paint() {
     S.els.main.hidden = !S.data;
     if (!S.data) return;
     renderTime(P, S.els.time);
-    renderTray(P, S.els.tray);
-    renderTasks(P, S.els.tasksCols);
+    renderMemos(P);
   });
 }
 
@@ -396,28 +382,8 @@ export default {
     S.els.main = el("div", "plan-grid", null, wrap);
     const lcol = el("div", "plan-left", null, S.els.main);
     S.els.time = el("section", "card plan-time", null, lcol);
-    const tasks = el("section", "card plan-tasks", null, lcol);
-    const th = el("div", "ch", null, tasks);
-    const tt = el("div", "ct", null, th);
-    el("h3", null, "Tasks per area", tt);
-    el("p", null, "To do, next, doing, pending review, done. Tasks are planned from a session. Tasks from project plans are read-only.", tt);
-    S.els.taskAdd = el("div", "plan-taskadd", null, tasks);
-    buildTaskAdd(P, S.els.taskAdd);
-    S.els.taskCtl = el("div", "plan-taskctl", null, tasks);
-    buildTaskControls(P, S.els.taskCtl);
-    const colsWrap = el("div", "plan-colswrap", null, tasks);
-    S.els.tasksCols = el("div", "plan-cols", null, colsWrap);
-    const fade = () => {
-      const c = S.els.tasksCols;
-      if (!c) return;
-      colsWrap.classList.toggle("can-l", c.scrollLeft > 2);
-      colsWrap.classList.toggle("can-r", c.scrollLeft + c.clientWidth < c.scrollWidth - 2);
-    };
-    S.els.tasksCols.addEventListener("scroll", fade, { passive: true });
-    S.fadeObs = [];
-    if (window.ResizeObserver) { const ro = new ResizeObserver(fade); ro.observe(S.els.tasksCols); S.fadeObs.push(ro); }
-    if (window.MutationObserver) { const mo = new MutationObserver(fade); mo.observe(S.els.tasksCols, { childList: true }); S.fadeObs.push(mo); }
-    S.els.tray = el("aside", "card plan-tray", null, S.els.main);
+    S.els.rail = el("aside", "card plan-rail", null, S.els.main);
+    buildMemoRail(P, S.els.rail);
     S.els.floatHost = el("div", "plan-float-host", null, wrap);
     S.els.main.hidden = true;
     S.onKey = (ev) => { if (ev.key === "Escape") { closeForm(P); } };
@@ -428,7 +394,6 @@ export default {
   unmount() {
     if (!S) return;
     S.dead = true;
-    (S.fadeObs || []).forEach((o) => o.disconnect());
     stopFit();
     clearTimeout(S.noticeTimer);
     document.removeEventListener("keydown", S.onKey);

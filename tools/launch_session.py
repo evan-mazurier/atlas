@@ -2,7 +2,7 @@
 
 Deterministic half of /launch-auto: validate the request, write the marker file
 `<ledger>/auto/<marker>.json`, print ONE JSON object `{marker, area, group, model, title, prompt}`
-that the Chief hands to the scheduled-task tool. Starting the session itself is the Chief's job
+that the orchestrator hands to the scheduled-task tool. Starting the session itself is the orchestrator's job
 (Python cannot call the desktop app's tools).
 
     py -3.12 tools/launch_session.py --area md --type coding --model claude-sonnet-5-5 \
@@ -53,6 +53,9 @@ def check_brief(text: str) -> None:
             raise LaunchError(f"brief line {n} starts with /grant-rework: only the operator can grant a rework round")
         if line.strip().lower().startswith("/ack-break"):
             raise LaunchError(f"brief line {n} starts with /ack-break: only the operator can acknowledge an integrity break")
+        for cmd in ("/allow-publish", "/allow-config"):
+            if line.strip().lower().startswith(cmd):
+                raise LaunchError(f"brief line {n} starts with {cmd}: only the operator can type it")
     if not text.strip():
         raise LaunchError("the brief is empty")
 

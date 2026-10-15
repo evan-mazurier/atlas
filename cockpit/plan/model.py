@@ -435,6 +435,8 @@ def build(sched: dict, tdoc: dict, frm: dt.date, to: dt.date, version: int, runs
             e = linked.get(str(r["id"]))
             if e:             # the event is the truth for "planned in my time"
                 r["planned"] = {"day": str(e["day"]), "start": valid_hhmm(e["start"]), "end": valid_hhmm(e["end"]), "on": "me"}
+                if e.get("done") is True:
+                    r["planned"]["done"] = True
             elif r["owner"] == "agents" and isinstance(r.get("planned"), dict):
                 r["planned"] = {**r["planned"], "on": "agents"}
             else:

@@ -1,7 +1,7 @@
-/* Plan screen: the review tray (right column) and tasks per area. */
+/* Plan screen: the "To schedule" memo rail (right column). A memo is a task from tasks.yaml; it is scheduled
+   by dragging it onto the calendar (task/place) or from a session (tools/plan_day.py). */
 import {
-  STATES, STATE_LABELS, groupTasks, isReadOnlyTask, fmtEstimate, reviewLen, EDIT_MIN, EDIT_MAX, snap, clamp, fromMin, dayShort,
-  plannedLabel, tasksByState, areaVar, unassignedTasks,
+  memoList, memoLen, memoPlannedLabel, isScheduledMemo, fmtEstimate, fmtMemoEst, EDIT_MIN, EDIT_MAX, snap, clamp, fromMin, dayShort, areaVar,
 } from "./plan-core.js";
 import { slotAt, surfaceRect } from "./plan-time.js";
 
@@ -14,56 +14,64 @@ function mk(tag, cls, text, parent) {
 }
 function areaCol(P, a) { return areaVar(P.ctx.areas, a); }
 
-/* ---------- review tray ---------- */
-export function renderTray(P, host) {
-  const { S, ctx } = P;
-  host.textContent = "";
-  const tray = S.data.review_tray || [];
+/** The rail's frame, built once: heading, help, quick add, list. The add form keeps its values in S.taskForm. */
+export function buildMemoRail(P, host) {
+  const { S } = P;
   const ch = mk("div", "ch", null, host);
   const ct = mk("div", "ct", null, ch);
-  mk("h3", null, "Review tray", ct);
-  mk("p", null, tray.length + (tray.length === 1 ? " item" : " items") + " waiting. Drag one onto the calendar to schedule it.", ct);
-  const list = mk("div", "plan-rvlist", null, host);
-  list.setAttribute("data-keep-scroll", "");
-  if (!tray.length) {
-    mk("div", "plan-rv-empty", "No finished work is waiting for review.", list);
+  mk("h3", null, "To schedule", ct);
+  mk("p", null, "Ideas to schedule later. Drag one onto the calendar, or plan it from a session.", ct);
+  S.els.memoAdd = mk("div", "plan-memoadd", null, host);
+  buildMemoAdd(P, S.els.memoAdd);
+  S.els.memoList = mk("div", "plan-memolist", null, host);
+  S.els.memoList.setAttribute("data-keep-scroll", "");
+}
+
+export function renderMemos(P) {
+  const { S } = P;
+  const host = S.els.memoList;
+  if (S.memoAddH) S.memoAddH.sync();
+  host.textContent = "";
+  const memos = memoList(S.data.tasks || {});
+  if (!memos.length) {
+    mk("div", "plan-rv-empty", "Nothing to schedule. Add an idea above.", host);
     return;
   }
-  tray.forEach((it) => {
-    const col = areaCol(P, it.area);
-    const card = mk("div", "plan-rv", null, list);
-    card.style.setProperty("--c", col);
-    mk("i", "plan-rv-bar", null, card);
-    const bodyEl = mk("div", "plan-rv-b", null, card);
-    mk("div", "plan-rv-t", it.title, bodyEl);
-    const meta = mk("div", "plan-rv-m", null, bodyEl);
-    mk("span", "mono", "est. " + (it.review_min || 20) + " min", meta);
-    mk("span", "plan-rv-v mono", it.verdict || "", meta);
-    if (it.scheduled && it.scheduled.day) {
-      mk("div", "plan-rv-s", "Scheduled " + dayShort(it.scheduled.day) + " " + it.scheduled.start + " to " + it.scheduled.end, bodyEl);
-    }
-    const acts = mk("div", "plan-rv-a", null, bodyEl);
-    ctx.ui.button(acts, { label: it.scheduled ? "Reschedule" : "Schedule", onClick: () => P.openForm({ mode: "review", item: it, day: S.day }) });
-    ctx.ui.button(acts, { label: "Mark reviewed", onClick: () => P.act.reviewDone(it) });
-    card.addEventListener("pointerdown", (e) => {
+  const shortOf = {};
+  (S.data.areas || []).forEach((a) => { shortOf[a.id] = a.short || String(a.id).toUpperCase().slice(0, 5); });
+  memos.forEach((t) => {
+    const scheduled = isScheduledMemo(t);
+    const row = mk("div", "plan-memo" + (scheduled ? " sched" : ""), null, host);
+    row.style.setProperty("--c", areaCol(P, t.area));
+    const top = mk("div", "plan-memo-t", null, row);
+    mk("i", "plan-memo-dot", null, top);
+    mk("span", "plan-memo-a mono", shortOf[t.area] || "-", top);
+    const title = mk("span", "plan-memo-n", t.title, top);
+    title.title = t.title;
+    const meta = mk("div", "plan-memo-m", null, row);
+    mk("span", "mono", scheduled ? memoPlannedLabel(t.planned) : (fmtMemoEst(t.estimate_min) || "no estimate"), meta);
+    const rm = mk("button", "plan-link", "Remove", meta);
+    rm.type = "button";
+    rm.addEventListener("click", () => P.act.setTaskState(t, "done"));
+    row.addEventListener("pointerdown", (e) => {
       if (e.target.closest("button") || (e.pointerType === "mouse" && e.button !== 0)) return;
-      cardDrag(P, e, { item: it, title: it.title, len: reviewLen(it) }, card);
+      cardDrag(P, e, { task: t, title: t.title, len: memoLen(t) }, row);
     });
   });
 }
 
-/** Where a dragged review card would land: {day, start, end} | null. */
+/** Where a dragged memo would land: {day, start, end} | null. */
 function dropTarget(P, ev, drag) {
   const len = drag.len;
   const mine = slotAt(P, ev.clientX, ev.clientY);
   if (mine) {
-    const start = clamp(snap(mine.min - len / 2), EDIT_MIN, EDIT_MAX - len);
-    return { day: mine.day, start, end: start + len };
+    const start = clamp(snap(mine.min - len / 2), EDIT_MIN, Math.max(EDIT_MIN, EDIT_MAX - len));
+    return { day: mine.day, start, end: Math.min(start + len, EDIT_MAX) };
   }
   return null;
 }
 
-/** Drag a review card onto the calendar. */
+/** Drag a memo card onto the calendar. */
 function cardDrag(P, e0, drag, card) {
   const { S } = P;
   if (S.drag) return;
@@ -81,9 +89,9 @@ function cardDrag(P, e0, drag, card) {
     if (!moved) {
       if (Math.hypot(ev.clientX - e0.clientX, ev.clientY - e0.clientY) < 5) return;
       moved = true;
-      S.drag = { tray: true };
+      S.drag = { memo: true };
       P.ctx.kit.hideTip();
-      ghost = mk("div", "plan-rv-ghost", null, document.body);
+      ghost = mk("div", "plan-ghost", null, document.body);
       mk("b", null, drag.title, ghost);
       tip = mk("span", null, "", ghost);
       card.classList.add("lift");
@@ -105,8 +113,8 @@ function cardDrag(P, e0, drag, card) {
     card.classList.remove("lift");
     light(null);
     const t = !cancelled && surfaceRect(P) ? dropTarget(P, ev, drag) : null;
-    if (t) P.act.scheduleReview(drag.item, t.day, t.start, t.end);
-    else if (!cancelled) P.act.notice("Drop the review on a free slot in the calendar.", "warn");
+    if (t) P.act.placeMemo(drag.task, t.day, t.start, t.end);
+    else if (!cancelled) P.act.notice("Drop the memo on the calendar.", "warn");
     P.dragEnded();
   };
   const onUp = (ev) => finish(ev, false);
@@ -116,154 +124,21 @@ function cardDrag(P, e0, drag, card) {
   document.addEventListener("pointercancel", onCancel);
 }
 
-/* ---------- tasks: group by area or by state ---------- */
-/** "Group by: Area | State" and the area chips (themed toggles). Built once; values live in S. */
-export function buildTaskControls(P, host) {
-  const { S, ctx } = P;
-  const left = mk("div", "plan-ta-c", null, host);
-  mk("span", "plan-fl", "Group by", left);
-  ctx.ui.segmented(left, {
-    options: [{ value: "area", label: "Area" }, { value: "state", label: "State" }],
-    value: S.taskGroup,
-    onChange: (v) => { S.taskGroup = v; P.paint(); },
-  });
-  const right = mk("div", "plan-ta-c plan-chips-w", null, host);
-  mk("span", "plan-fl", "Areas shown", right);
-  const box = mk("div", "plan-chips", null, right);
-  let seen = "";
-  const sync = () => {
-    const key = ctx.areas.map((a) => a.id).join(",");
-    if (key !== seen) {
-      seen = key;
-      box.textContent = "";
-      ctx.areas.forEach((a) => {
-        const b = mk("button", "plan-achip", null, box);
-        b.type = "button";
-        b.dataset.area = a.id;
-        mk("i", "sw", null, b).style.background = areaCol(P, a.id);
-        mk("span", null, a.name, b);
-        b.addEventListener("click", () => { S.hiddenAreas[a.id] = !S.hiddenAreas[a.id]; P.paint(); });
-      });
-    }
-    box.querySelectorAll(".plan-achip").forEach((b) => {
-      const hidden = !!S.hiddenAreas[b.dataset.area];
-      b.classList.toggle("off", hidden);
-      b.setAttribute("aria-pressed", hidden ? "false" : "true");
-      b.title = (hidden ? "Show " : "Hide ") + (ctx.areaName ? ctx.areaName(b.dataset.area) : b.dataset.area) + " tasks";
-    });
-  };
-  S.taskCtlH = { sync };
-  sync();
-}
-
-export function renderTasks(P, host) {
-  const { S, ctx } = P;
-  if (host.querySelector(".ui-dd.open")) return;       // an open menu must not be torn down by a poll
-  host.textContent = "";
-  if (S.taskAddH) S.taskAddH.sync();
-  if (S.taskCtlH) S.taskCtlH.sync();
-  const tasks = S.data.tasks || {};
-  const areas = ctx.areas;
-  host.classList.toggle("by-state", S.taskGroup === "state");
-  if (!areas.length) { mk("div", "plan-rv-empty", "No areas loaded.", host); return; }
-  const shown = areas.filter((a) => !S.hiddenAreas[a.id]);
-  const orphans = unassignedTasks(tasks, areas);
-  if (!shown.length && !orphans.length) { mk("div", "plan-rv-empty", "Every area is hidden. Turn one on above.", host); return; }
-  if (S.taskGroup === "state") { renderByState(P, host, tasks, areas); return; }
-  const column = (key, name, list) => {
-    const g = groupTasks(list);
-    const col = mk("div", "plan-acol", null, host);
-    col.style.setProperty("--c", areaCol(P, key));
-    const hd = mk("div", "plan-acol-h", null, col);
-    mk("i", "sw", null, hd).style.background = areaCol(P, key);
-    mk("b", null, name, hd);
-    mk("span", "mono muted", String(list.filter((t) => t.state !== "done").length), hd);
-    if (!list.length) mk("div", "plan-acol-empty", "No tasks.", col);
-    STATES.forEach((st) => {
-      const items = g[st];
-      if (!items.length) return;
-      const grp = mk("div", "plan-grp", null, col);
-      const gh = mk("div", "plan-grp-h", null, grp);
-      mk("span", null, STATE_LABELS[st], gh);
-      mk("span", "mono", String(items.length), gh);
-      if (st === "done") {
-        const open = !!S.doneOpen[key || "unassigned"];
-        const tg = mk("button", "plan-link", open ? "Hide" : "Show", gh);
-        tg.type = "button";
-        tg.addEventListener("click", () => { S.doneOpen[key || "unassigned"] = !open; P.paint(); });
-        if (!open) return;
-      }
-      items.forEach((t) => taskRow(P, grp, Object.assign({ area: key }, t), false));
-    });
-  };
-  shown.forEach((a) => column(a.id, a.name, tasks[a.id] || []));
-  if (orphans.length) column(null, "Unassigned", orphans);
-}
-
-function renderByState(P, host, tasks, areas) {
-  const { S } = P;
-  const g = tasksByState(tasks, areas, S.hiddenAreas);
-  STATES.forEach((st) => {
-    const items = g[st];
-    const col = mk("div", "plan-scol", null, host);
-    const hd = mk("div", "plan-acol-h", null, col);
-    mk("b", null, STATE_LABELS[st], hd);
-    mk("span", "mono muted", String(items.length), hd);
-    if (st === "done" && items.length) {
-      const open = !!S.doneOpen["*"];
-      const tg = mk("button", "plan-link", open ? "Hide" : "Show", hd);
-      tg.type = "button";
-      tg.addEventListener("click", () => { S.doneOpen["*"] = !open; P.paint(); });
-      if (!open) return;
-    }
-    if (!items.length) mk("div", "plan-acol-empty", "No tasks.", col);
-    items.forEach((t) => taskRow(P, col, t, true));
-  });
-}
-
-function taskRow(P, parent, t, withArea) {
-  const { ctx } = P;
-  const row = mk("div", "plan-task" + (t.state === "done" ? " done" : ""), null, parent);
-  row.style.setProperty("--c", areaCol(P, t.area));
-  const top = mk("div", "plan-task-t", t.title, row);
-  top.title = t.title;
-  const meta = mk("div", "plan-task-m", null, row);
-  const bits = [];
-  if (t.estimate_min != null) bits.push(fmtEstimate(t.estimate_min));
-  bits.push(t.owner === "agents" ? "agents" : "me");
-  if (t.reversible === false) bits.push("irreversible");
-  if (withArea) bits.push(ctx.areaName ? ctx.areaName(t.area) : t.area);
-  mk("span", "mono", bits.join(" · "), meta);
-  const pl = plannedLabel(t.planned);
-  if (pl) {
-    const p = mk("span", "plan-planned", pl, meta);
-    p.title = t.planned.on === "agents" ? "A slot saved before the agents' lane was parked. Nothing starts by itself." : "Planned in the calendar.";
-  }
-  if (isReadOnlyTask(t)) {
-    mk("span", "plan-ro", "Read-only" + (t.project ? ", " + t.project : ", project plan"), meta);
-  } else {
-    ctx.ui.dropdown(meta, {
-      items: STATES.map((s) => ({ value: s, label: STATE_LABELS[s] })),
-      value: t.state,
-      onChange: (v) => { if (v !== t.state) P.act.setTaskState(t, v); },
-    });
-  }
-}
-
-/** The "add a task" row: built once, its values live in S.taskForm. */
-export function buildTaskAdd(P, host) {
+/** The quick-add block: built once, its values live in S.taskForm. A new memo is a task of mine, state todo. */
+function buildMemoAdd(P, host) {
   const { S, ctx } = P;
   const ui = ctx.ui;
   const f = S.taskForm;
-  const titleF = ui.field(host, { label: "Title", value: f.title, onInput: (v) => { f.title = v; sync(); }, placeholder: "New task" });
-  const areaWrap = mk("div", "plan-ta-c", null, host);
+  const titleF = ui.field(host, { label: "Title", value: f.title, onInput: (v) => { f.title = v; sync(); }, placeholder: "New memo" });
+  const opts = mk("div", "plan-memoadd-o", null, host);
+  const areaWrap = mk("div", "plan-ta-c", null, opts);
   mk("span", "plan-fl", "Area", areaWrap);
   const areaDD = ui.dropdown(areaWrap, { items: [], value: f.area, onChange: (v) => { f.area = v; sync(); } });
-  const estWrap = mk("div", "plan-ta-c", null, host);
+  const estWrap = mk("div", "plan-ta-c", null, opts);
   mk("span", "plan-fl", "Estimate", estWrap);
   ui.stepper(estWrap, { value: f.estimate, min: 0, max: 960, step: 15, format: (v) => (v ? fmtEstimate(v) : "none"), onChange: (v) => { f.estimate = v; } });
   const add = ui.button(host, {
-    label: "Add task",
+    label: "Add",
     onClick: () => {
       if (!f.title.trim() || !f.area) return;
       P.act.addTask({ title: f.title.trim(), area: f.area, estimate: f.estimate, owner: "me" });
@@ -285,6 +160,6 @@ export function buildTaskAdd(P, host) {
     const why = !f.title.trim() ? "A title is needed." : !f.area ? "An area is needed." : "";
     add.setDisabled(!!why, why);
   }
-  S.taskAddH = { sync };
+  S.memoAddH = { sync };
   sync();
 }

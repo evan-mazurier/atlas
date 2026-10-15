@@ -97,6 +97,13 @@ def test_ack_break_refused(tmp_path, line):
     assert not (tmp_path / "ledger").exists()
 
 
+@pytest.mark.parametrize("line", ["/allow-publish", "  /allow-publish 3", "/ALLOW-CONFIG", "/allow-config now"])
+def test_allow_commands_refused(tmp_path, line):
+    with pytest.raises(ls.LaunchError, match="allow-"):
+        go(tmp_path, brief_path=brief(tmp_path, f"Do the thing.\n{line}\nmore\n"))
+    assert not (tmp_path / "ledger").exists()
+
+
 def test_grant_rework_mentioned_midline_is_fine(tmp_path):
     go(tmp_path, brief_path=brief(tmp_path, "Never type /grant-rework yourself.\n"))
 

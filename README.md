@@ -2,7 +2,7 @@
 
 Atlas is a local control room and a tamper-evident record for work done with Claude Code. The work happens in
 Claude Code sessions. Atlas shows those sessions live, records what each one did in an append-only ledger,
-checks that the record has not been edited, and keeps a calendar and task lists next to it.
+checks that the record has not been edited, and keeps a calendar and a memo rail of ideas to schedule next to it.
 
 It runs on one machine and reads only local files; the only network use is the web fonts and the optional outside anchor's git push. Everything in this repository is
 standard-library Python plus plain HTML, CSS and JavaScript (no build step). The only Python dependency is `pyyaml`.
@@ -15,7 +15,7 @@ standard-library Python plus plain HTML, CSS and JavaScript (no build step). The
 
 | Screen | Key | What it shows |
 | --- | --- | --- |
-| Plan | `p` | Calendar and day view with up to 3 shared blocks running in parallel, task lists per area, a review tray for finished automatic work. |
+| Plan | `p` | Calendar and day view with up to 3 shared blocks running in parallel, a To schedule memo rail of ideas to schedule later, dragged onto the calendar or planned from a session. |
 | Team | `t` | Live sessions and their helpers (a session closed with `: team-done` shows done, not waiting), a timeline of the day, the roster of named helpers and what each may not do. |
 | Ledger | `l` | Tasks, review rounds, first-pass rate, usage by model and helper, working time by area (active time: helper runs plus gaps of up to 15 minutes, not wall-clock), ledger integrity and bypass attempts. |
 
@@ -64,8 +64,8 @@ standard-library Python plus plain HTML, CSS and JavaScript (no build step). The
 - **Parallel planning.** An area is `shared` or `full` attention (`areas.yaml`). Up to 3 shared blocks may overlap; a full
   block overlaps nothing. The week view packs shared blocks into tracks, and the day view shows one row per track.
 - **Planning by chat.** `tools/plan_day.py` shows the calendar and applies a list of edits (add, move, delete, retitle,
-  done, undone) through the running cockpit, so every guard of the Plan engine applies. `tools/find_plan_item.py` finds a
-  block or task id by name. The Plan screen itself moves, resizes and edits blocks. Marking a block done is manual and
+  done, undone, memo, place) through the running cockpit, so every guard of the Plan engine applies. `tools/find_plan_item.py` finds a
+  block or task id by name. The `memos` command lists the To schedule memos, `memo` adds one and `place` puts one on the calendar (it stays greyed until its block is done). The Plan screen itself moves, resizes and edits blocks, and memos can be dragged onto the calendar. Marking a block done is manual and
   optional (a button in the event form, or the `done` op).
 - **Areas are one short file.** `areas.yaml` is the only place an area (name, colour, folders, keywords) is defined.
   `tools/check_look.py` checks the colours for colour-blind safety.

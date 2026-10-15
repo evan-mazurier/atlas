@@ -1,6 +1,7 @@
 """Tests for tools/install_hooks.py, hooks_mode.py, import_v1_ledger.py. Temp dirs and env overrides only."""
 import copy
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -75,7 +76,11 @@ def test_install_merges_keeps_existing_and_is_idempotent(home, capsys):
     ours = {ev: [g for g in groups if "atlas_hook.py" in json.dumps(g)] for ev, groups in after["hooks"].items()}
     assert set(k for k, v in ours.items() if v) == {e for e, _m in install_hooks.EVENTS}
     pre = ours["PreToolUse"][0]
-    assert pre["matcher"] == "Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage"
+    assert pre["matcher"] == install_hooks.PRE_MATCHER
+    assert pre["matcher"].startswith("Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage")
+    for name in ("mcp__scheduled-tasks__create_scheduled_task", "mcp__scheduled-tasks__update_scheduled_task",
+                 "RemoteTrigger", "CronCreate", "SendMessage"):
+        assert re.search("^(?:" + pre["matcher"] + ")$", name), name
     h = pre["hooks"][0]
     assert h["command"] == PY and h["timeout"] == 5 and "async" not in h and h["args"][0].endswith("/atlas/atlas_hook.py")
     assert ours["PostToolUse"][0]["matcher"] == "Agent|Edit|Write|NotebookEdit"
@@ -93,6 +98,8 @@ def test_install_merges_keeps_existing_and_is_idempotent(home, capsys):
     assert "disable-model-invocation: true" in ack
     pub = (home / "claude" / "skills" / "allow-publish" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation: true" in pub
+    cfg = (home / "claude" / "skills" / "allow-config" / "SKILL.md").read_text(encoding="utf-8")
+    assert "disable-model-invocation: true" in cfg
     assert (home / "claude" / "hooks" / "team_events.py").read_bytes() == (REPO / "hooks" / "team_events.py").read_bytes()
     # initial mode event written
     assert [e["to"] for e in store.read_events() if e["ev"] == "mode"] == ["record"]

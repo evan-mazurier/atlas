@@ -4,7 +4,7 @@
 
 Exit 0 when every file passes, 1 otherwise. `--json` prints {"ok": bool, "problems": [...]}.
 
-areas.yaml : parses; ids unique and ^[a-z][a-z0-9-]{0,15}$; names non-empty; attention in {shared, full}, attention_fixed a boolean, short 2 to 5 capitals A-Z
+areas.yaml : parses; ids unique and ^[a-z][a-z0-9-]{0,15}$; names non-empty; attention in {shared, full}, attention_fixed a boolean, archived a boolean, short 2 to 5 capitals A-Z
              (all optional); colours #rrggbb; the colours, in
              file order, pass the five checks of tools/vendor/validate_palette.js in dark mode against the
              surface (--bg of look.css, default #000000): OKLCH lightness band, chroma floor, adjacent-pair
@@ -147,6 +147,8 @@ def check_areas(path: Path, bg: str = DEFAULT_BG) -> list[str]:
             problems.append(f"area {aid}: attention {a['attention']!r} must be shared or full")
         if "attention_fixed" in a and not isinstance(a["attention_fixed"], bool):
             problems.append(f"area {aid}: attention_fixed must be true or false")
+        if "archived" in a and not isinstance(a["archived"], bool):
+            problems.append(f"area {aid}: archived must be true or false")
         if "short" in a and not (isinstance(a["short"], str) and SHORT_RE.match(a["short"])):
             problems.append(f"area {aid}: short {a['short']!r} must be 2 to 5 capital letters A-Z")
         col = a.get("color")

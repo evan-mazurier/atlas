@@ -175,13 +175,13 @@ facts.
 | `helper_paired` | SubagentStart (once per run: a resumed helper pairs again with `tuid: null`) | `agent_id`, `helper`, `tuid` (the pending `helper_start` it was paired with, §6.2; null for a resumed helper) |
 | `helper_resume` | PreToolUse SendMessage (main session only, target's previous run ended) | `task`, `agent_id`, `helper` |
 | `helper_end` | SubagentStop (once per run) | `agent_id`, `helper`, `status?` |
-| `verdict` | a reviewer's hand-back (§6.2), once per run (a resumed reviewer gives a new one) | `task`, `agent_id`, `helper`, `verdict` ∈ `READY` `NEEDS_CHANGES` `ESCALATE`, `version` (task version at the reviewer's launch), `findings` (int) |
+| `verdict` | a reviewer's hand-back (§6.2), once per run (a resumed reviewer gives a new one) | `task`, `agent_id`, `helper`, `verdict` ∈ `READY` `NEEDS_CHANGES` `ESCALATE`, `version` (task version at the reviewer's launch), `findings` (int), `round?` (bool, only on `NEEDS_CHANGES` verdicts, since 2026-10-26: the hook's decision whether this verdict counts as a new rework round, see "Rounds" under the task-opening rules; absent on older events and on late verdicts), `counted_on?` (only on a late NEEDS_CHANGES or ESCALATE verdict: the open task's id or `"next"`, see "Late verdicts") |
 | `auto` | PreToolUse `: team-auto <marker>` (first command of an automatic session) | `marker` |
 | `ignored` | a `: team-*` command from a helper, or a grant from a non-interactive entry (the entry rule applies to grants only: automatic sessions must be able to run `: team-auto`) | `what` (≤ 60) |
 | `tamper` | any hook run that finds the installed config's mode ≠ the last `mode` event | `found`, `expected` |
 | `check` | PostToolUse Edit/Write on `areas.yaml` or `cockpit/web2/look.css` | `task`, `file`, `ok`, `problems` (list of ≤ 5 short strings), `version`, an `ok` check on a change touching ONLY those files counts as READY for the done-lock |
 | `edit` | PostToolUse Edit/Write/NotebookEdit (main or helper), non-exempt path (§6.5) | `task`, `path` (absolute), `tool`, `version` (after the bump) |
-| `refusal` | any guard that refuses (or would refuse in record mode) | `task`, `guard` ∈ `rework` `done_lock` `quick_question` `publish` `config`, `would` (bool: true in record mode = logged, not enforced), `detail` (≤ 200 chars, the reason shown); since 2026-10-10, when the refusal is of a helper spawn (the Agent tool): `helper` (the refused `subagent_type`), `label` (the spawn's description ≤ 60) and `tuid` (the spawn's tool-use id, so a later `helper_paired` with the same `tuid` gives the helper's `agent_id`). Older events lack them. The top-level `agent_id` is the SPAWNER's, never the refused builder's. A `publish` refusal (§6.4b, since 2026-10-10) is never a would-refusal (`would: false` in every mode) and carries `what` (the first matched family, for example `git push`; never the command), `count` (how many publishes the command held) and `actor` (`main`, or the helper's type, with the helper's `agent_id` in the top-level field). A `config` refusal (§6.4c, since 2026-10-13) is likewise never a would-refusal (`would: false` in every mode), is NOT a rework refusal, and carries `path` (an Edit tool: the file path) or `what` (a shell command: a short label such as `claude-md` or `install-tool`, never the command), `tool`, and `actor`. |
+| `refusal` | any guard that refuses (or would refuse in record mode) | `task`, `tool?` (a `rework` refusal of a session-starting or messaging tool, §6.3: the tool name only, never prompt or message text), `guard` ∈ `rework` `done_lock` `quick_question` `publish` `config` `declare` (§6.6a, since 2026-10-15; a helper-spawn refusal with `helper`, `label`, `tuid` as below), `would` (bool: true in record mode = logged, not enforced), `detail` (≤ 200 chars, the reason shown); since 2026-10-10, when the refusal is of a helper spawn (the Agent tool): `helper` (the refused `subagent_type`), `label` (the spawn's description ≤ 60) and `tuid` (the spawn's tool-use id, so a later `helper_paired` with the same `tuid` gives the helper's `agent_id`). Older events lack them. The top-level `agent_id` is the SPAWNER's, never the refused builder's. A `publish` refusal (§6.4b, since 2026-10-10) is never a would-refusal (`would: false` in every mode) and carries `what` (the first matched family, for example `git push`; never the command), `count` (how many publishes the command held) and `actor` (`main`, or the helper's type, with the helper's `agent_id` in the top-level field). A `config` refusal (§6.4c, since 2026-10-13) is likewise never a would-refusal (`would: false` in every mode), is NOT a rework refusal, and carries `path` (an Edit tool: the file path) or `what` (a shell command: a short label such as `claude-md` or `install-tool`, never the command), `tool`, and `actor`. |
 | `publish_grant` | UserPromptSubmit whose prompt starts with `/allow-publish [n]` (interactive entry, main session only; §6.4b) | `n` (1..5, default 1), `expires` (ISO, 30 minutes after the grant), `entry` |
 | `publish_allowed` | PreToolUse Bash/PowerShell: a publish command let through by a grant (§6.4b) | `what` (the matched family; never the command) |
 | `config_grant` | UserPromptSubmit whose prompt starts with `/allow-config` (interactive entry, main session only; §6.4c) | `expires` (ISO, 15 minutes after the grant), `entry` |
@@ -190,7 +190,9 @@ facts.
 | `anchor_configured` | tools/anchor_ledger.py, once, on its first successful push to the outside anchor remote (§1 "Outside anchor") | `url` (the pinned remote); `sid` = `anchor-tool` |
 | `reminder` | PreToolUse Agent, main session, once per task (§6.3a) | `task`, `why` (`is over its rework budget` or `has been open a long time`) |
 | `sendback` | Stop when the done-lock would send the orchestrator back | `task`, `version`, `would` (bool) |
-| `rework_granted` | UserPromptSubmit (prompt starts with `/grant-rework`; interactive entry only) | `task`, `n` (int ≥ 1, default 1) |
+| `rework_granted` | UserPromptSubmit (prompt starts with `/grant-rework`; interactive entry only) | `task`, `n` (int ≥ 1, default 1), `for_task?` (LEGACY: no longer emitted; events from the 2026-10-26 abandon-and-lock build may carry the abandoned task's id, and `derive` still counts such a grant on that task) |
+| `task_abandoned` | `open_task`, just BEFORE the `work_type`/`playbook` of a declaration over a task with an open failing review that is not carried (see "Declaring over an open failing review"; since 2026-10-26) | `task` (the old task's id), `needs_changes` (its rounds), `granted`. Metadata only: no paths, no text. (Events from the first build also carry `paths`; they are ignored.) |
+| `rework_recalled` | LEGACY: no longer emitted (the 2026-10-26 abandon-and-lock build emitted it on a touch of a locked file); `derive` still reads it | `task`, `from_task`, `nc`, `path` |
 | `cost` | Stop and SessionEnd (§1.5) | `scope` (`main` or the helper's `agent_id`), `helper?`, `model`, `in`, `out`, `cache_read`, `cache_write`, `weighted` |
 | `mode` | `tools/hooks_mode.py` | `from`, `to` |
 | `bypass_attempt` | PreToolUse Bash/PowerShell denied by rule B (§6.4) | `tool`, `matched` (≤ 60), `denied` (true); since 2026-10-10 also `actor` (`main` or the helper type), `agent_id?`, `actor_task?` (the helper's launch label ≤ 60), `desc?` (the Bash `description`, ≤ 160, masked, see §1), `target` (derived label: `ledger`, `ledger-day:YYYY-MM-DD`, `hooks-config`, `hooks-program` or `hooks-folder`; never command text), `effect` ∈ `read` `change` `delete` `unclear` (deterministic, linear-time classification of the WHOLE command, every `;`/`&&`/pipe segment; `read` only when every segment has a read-tool head and no change signal; any interpreter, `xargs`, `-exec` or opaque tool gives `unclear` unless a clear change or delete signal is present; a command over 4096 characters is `unclear` without being classified). Older events lack the new fields. |
@@ -216,8 +218,8 @@ Task-opening rules:
   `tools/find_plan_item.py "<name words>" [--day YYYY-MM-DD]` finds the id (§5.3).
 * **Automatic Plan link** (since 2026-10-12): when the hook opens a `playbook` or `work_type` task WITHOUT an explicit `task:<id>`, it looks for the Plan item the session was run for. Never for the implicit `undeclared` task; an explicit `task:<id>` always wins and is unchanged. Candidates are today's calendar events (`GET <plan_url>/api/v2/plan?from=<today>&to=<today>`, section 5.3) with the SAME area as the task being opened, with a start and end time (all-day skipped), not `done`, and running now or starting within 15 minutes (`start - 15 min <= now < end`, local time). Exactly one candidate links; zero or several = no link (never a guess). The ref is the row's id: `evt_xxxxxxxx` for a single event, `evt_xxxxxxxx@YYYY-MM-DD` (the row's `occurrence`) when the row has `recur`; it is validated with the same pattern as an explicit ref. It is stored as `plan_ref` plus `plan_auto: true` on the opening event, at task open only (never revised later); `derive` copies both into the TaskRecord (`plan_auto`, false when absent). `plan_url` comes from `hooks/atlas_config.json` (key `plan_url`, default `http://127.0.0.1:8765`), overridden by the env var `ATLAS_PLAN_URL`; a present-but-empty, null or `off` value (either place) switches the feature off, the default URL applies only when the key is absent; only a loopback host (127.0.0.1, ::1, localhost) is used, with no proxy; a malformed `task:` token counts as explicit (no automatic link); helpers never trigger the read; an automatic ref is not an explicit one for the 60 s duplicate rule (an explicit `task:` after it re-opens the task); `install_hooks.py` keeps an installed `plan_url`. The read is stdlib `urllib` with a 0.5 s timeout per socket operation (redirects are not followed: a 30x means no link), done BEFORE the ledger transaction (never under the lock), only when a bare declaration or playbook is about to open; any failure (server down, bad JSON, timeout) = no link, silently, and the hook never reads `schedule.yaml`.
 * An explicit declaration always opens a **new** task, even with the same type as the open one (the old
-  task is closed as `switched`). The spent count carries on any re-declaration while the open task is at/over
-  budget and NOT RESOLVED, or escalated, whatever the type; under budget every declaration starts fresh. **Resolved**
+  task is closed as `switched`, or `abandoned`, see "Declaring over an open failing review"). Under the rules there, a
+  declaration over a task with an open failing review abandons it or carries its count; otherwise it starts fresh. **Resolved**
   (2026-10-10) = the task's most recent reviewer verdict is READY and that READY covers the latest main-session version
   (`last_verified >= version`) AND whose reviewer was LAUNCHED after the latest NEEDS CHANGES arrived (a reviewer started
   in parallel with the failing one cannot clear it: A and B launched together, A answers NEEDS CHANGES, B answers READY =
@@ -239,12 +241,48 @@ Task-opening rules:
   The main session's `version` counts only edits made in the main session (helpers edit in their own worktrees), so a
   count of NEEDS CHANGES with `version` 0 is NOT proof of an unresolved task. A task opened by a carry has no verdict
   yet, so it is unresolved and the next declaration carries again (the double-declaration escape stays closed) until a
-  READY lands on it.
+  READY lands on it (the next declaration carries again because the carried task is `chained`).
   Only an exact duplicate within 60 s (accidental double call) is a no-op (logged as `ignored`), unless a `task:` token names a different Plan item than the open task's `plan_ref` (that opens a new task).
-* Switching type while the open task has `needs_changes ≥ budget` or is `escalated` carries
-  `needs_changes`, `escalated` and `granted` into the new task and logs `refusal{guard: rework}`;
-  the new task's effective budget = min(old budget, new budget), stored in state (`derive` applies
-  the same rule).
+* A carry (any declaration, same type included, see "Declaring over an open failing review") carries `needs_changes`,
+  `escalated` and `granted` into the new task and logs `refusal{guard: rework}` with the detail `carry-over, not a denial:
+  budget carried over a new declaration (<n> NEEDS CHANGES)`; the new task's effective budget = min(old budget, new
+  budget), stored in state (`derive` applies the same rule). The `work_type` event carries `carried: true`.
+* **Rounds** (since 2026-10-26; only reviewer launches and verdicts count, versions do not). A NEEDS CHANGES verdict is a
+  new round when it is the task's first NEEDS CHANGES, or its reviewer was launched AFTER the previous failing review of
+  the task arrived (reviewer `seq` > `nc_at` as it stood before this verdict), or the reviewer's `seq` is unknown (the
+  strict side). Several reviewers launched before a failing review arrives count once; a reviewer resumed with
+  SendMessage counts as launched at the resume (`helper_resume`). The hook decides this when it records the verdict and
+  writes it as `round: true|false` on the NEEDS_CHANGES `verdict` event (`apply_event` uses the field; a legacy event
+  without it is decided by the same rule). State: `nc_rounds` (int, own rounds, reset on a fresh open) and `carried_nc`;
+  `nc_count = carried_nc + nc_rounds`; `nc_at` = `spawn_seq` at every NEEDS CHANGES. `derive` uses the `round` field; a
+  NEEDS_CHANGES verdict without it (a legacy stream) counts one round per distinct failing `version`, so historic numbers
+  do not change.
+* **Late verdicts** (since 2026-10-26). A NEEDS_CHANGES or ESCALATE verdict whose task is not the open task (its reviewer
+  was launched for an earlier task) or that arrives when no task is open is never lost: it counts on the open task as a
+  carried round (a late NEEDS CHANGES always counts +1, whatever `nc_at` was: `carried_nc += 1`, `nc_at = spawn_seq` so only a reviewer launched after it can resolve, `chained`
+  true; ESCALATE sets `escalated`). With no task open it is added to the state counters `late_nc` / `late_esc`, applied the
+  same way to the next task that opens (fresh, carried or implicit) and then reset. The hook records the decision on the verdict
+  event as `counted_on: <open task id>` or `"next"`; `round` is not set. `derive` mirrors it: a verdict with `counted_on` adds a
+  carried round (and `nc_at`, escalation) to that task or to the next opened one, and is not an own round of its launch task.
+  The entry in the launch task's `verdicts` list carries `late: true` and never becomes that task's `final_verdict`. A late
+  verdict before any task exists in the session also applies to the first task opened. A late READY changes nothing. Events without `counted_on` derive as before.
+* **Closing** (guard `done_lock`, §6.5): `: team-done` is refused while the task has an open failing review, whatever the
+  version or budget: `(nc_count > 0 and not resolved) or escalated`.
+* **Declaring over an open failing review** (`nc_count > 0` and the open task is not resolved). If the task is escalated
+  or `chained` (spent or not), the declaration CARRIES exactly as in the carry bullet above. Otherwise the hook emits
+  `task_abandoned {task, needs_changes, granted}` for the old task and opens the new task FRESH (own budget, `granted` 0,
+  no `carried` flag). Any abandon chains: the task opened next is `chained` (`chain_next`). A task opened by a carry is
+  `chained`. A fresh open over a task with no open failing review opens fresh as before, and is `chained` when the old
+  task (still open, or closed with `team-done`) was `chained` and has not passed review with a change: the chain ends
+  only on a passing review of a task that changed something, i.e. `task_resolved` (READY from a reviewer launched after
+  its latest failing review) AND `version > 0` (main-session or helper edit events); a READY on a task with no edits does
+  not end it. It survives any declaration, an empty one included. An escalated task with no failing review carries as
+  before. `derive` mirrors this through the hook's `carried` flag: `task_abandoned` sets status `abandoned` and the next
+  task starts fresh (`own 0, carried 0`); a `work_type` with `carried: true` carries. `/grant-rework` is plain (§6.4):
+  `granted += n` on the current task, `escalated` cleared. The files a task edited are never locked and shell commands
+  are never parsed. The hook can't tell whether new work is really new: a session gets one fresh budget per chain, and a
+  chain ends only on a passing review of a task that changed something. Every abandon is recorded and shown on the Ledger
+  and in the weekly report.
 * A non-exempt edit with no open task opens an implicit task of type `undeclared`
   (`needs_check: true`, `default_budget`).
 * Playbook names = those listed in some area's `playbooks` or in `workflows.yaml` `playbooks:`; only
@@ -268,9 +306,9 @@ normalised slashes) → `null` (shown as "Unassigned"). Lane 1 owns `area_for`; 
 
 A cache only: if missing or unreadable, the hook rebuilds it by scanning back day files to the one
 holding that sid's `session_start` (cap 30 days). SessionStart with `source=resume` keeps the cached
-open task. The derivation (§1.7) never reads the cache. `needs_changes` = the number of **distinct
-versions** with at least one NEEDS_CHANGES verdict (hook and `derive` alike), so a reviewer and a
-senior-reviewer both failing the same version burn one round.
+open task. The derivation (§1.7) never reads the cache. `needs_changes` = `nc_count` = the rounds
+carried over a carry plus this task's own rounds (see "Rounds", §1.2): reviewers launched together that both fail burn one
+round, a reviewer launched after the failing review arrived burns another, whatever the edit version.
 
 ### 1.5 Cost capture
 
@@ -306,7 +344,9 @@ id. Reports counts per kept/dropped field.
 ### 1.7 Task records (derived on read: `cockpit/ledger2/derive.py`)
 
 A task runs from its opening event to the first of: its `task_done` (status `done`), the next opening
-event in the same session (`switched`), `session_end` (`ended`), or nothing yet (`open`). v1 jobs
+event in the same session (`switched`), a `task_abandoned` for it (`abandoned`, since 2026-10-26: a task with an open failing review a
+new declaration left behind; the next task opens fresh, with no carry), `session_end` (`ended`), or nothing
+yet (`open`). v1 jobs
 become tasks with `src: "v1"`, `type: "coding"`, area from the project (`areas.yaml` `projects`),
 crew from their phases, verdicts from `review` events, status `done` when merged.
 
@@ -336,7 +376,14 @@ value (`started` to `ended`, or to the last event while open). v1 imported tasks
 ```
 
 * `rounds.own` = this task's own NEEDS CHANGES rounds, `rounds.carried` = rounds carried over from the previous unresolved
-  task in the session (`needs_changes` = carried + own; `left` = budget + granted - needs_changes).
+  task in the session (`needs_changes` = carried + own; `left` = budget + granted - needs_changes). Own rounds follow
+  "Rounds" in §1.2: a NEEDS_CHANGES verdict with a `round` field counts when it is true; one without it (legacy) counts one
+  round per distinct failing `version`. An `abandoned` task keeps its own rounds; the next task starts at `own 0, carried 0`
+  (or carries when its `work_type` has `carried: true`). Legacy events are still read: `rework_recalled` gives the task `carried += nc` (also
+  `nc_at` = the spawn count), budget = min(current, the `from_task`'s) and `granted += the from_task's`; a `rework_granted`
+  with `for_task` counts on that task when it exists in the session, else on the current task. A stream without
+  `task_abandoned` derives exactly as before. Anything that sums or buckets rounds per task (the stats `rounds_hist`, the
+  weekly report) uses `own`, so a carried count is never counted twice.
 * `title` = the task's name: summary `goal`, else the first helper's first label (the description the main session gave it),
   else the session title, else null. The tasks endpoints (§5.2) replace it with `plan_title` when that resolves, so the field
   is the one name to show; `session_title` stays for a muted second line. A v1 job that never finished is `ended`
@@ -345,8 +392,8 @@ value (`started` to `ended`, or to the last event while open). v1 imported tasks
   Plan item's current title when the ref resolves (read-only, via `cockpit/plan/refs.py`, finished project-plan tasks included), else null.
   The Ledger tasks table shows a linked task as a muted "Plan:" prefix plus that title (its own name as the hover hint), so cost per Plan item is visible.
 * A task is **resolved** when its latest verdict is a READY covering the latest main-session version (see the task-opening
-  rules); an over-budget task without that carries into every chained re-declaration (a carried task has no verdict yet, so
-  it cannot be re-declared into a fresh budget). A task that got NEEDS CHANGES and then a READY is resolved even when the
+  rules); a task with an open failing review is abandoned or carried by the next declaration (§1.2; a carried task has no verdict yet,
+  so it cannot be re-declared into a fresh budget). A task that got NEEDS CHANGES and then a READY is resolved even when the
   main session never edited (`version` 0); main-session edits after the READY make it unresolved again, and so does a
   READY from a reviewer launched before the latest NEEDS CHANGES arrived.
 * `checked` = the final version has a READY verdict (or an `ok` check, §1.2) at that version.
@@ -385,11 +432,17 @@ v2: helpers edit through Edit/Write, and the reviewer checks the diff, not the e
 ## 3. The areas file
 
 `areas.yaml` (root), format documented in the file itself: `areas: [{id, name, color, folders?,
-playbooks?, projects?, match?, group?, attention?, attention_fixed?, short?}]`. The areas of this copy are the example set in `areas.yaml`, in file order (the order the
+playbooks?, projects?, match?, group?, attention?, attention_fixed?, short?, archived?}]`. The areas of this copy are the example set in `areas.yaml`, in file order (the order the
 colour-blind check passed).
 Parallel planning keys (2026-10-11), all optional and checked by `tools/check_look.py`: `attention: shared|full` (absent =
 full; a shared event may run in parallel with other shared events, a full one overlaps nothing), `attention_fixed: true`
 (an event cannot override the area's attention), `short: <2-5 capitals A-Z>` (the compact label on the Plan). Values: the example set shows each combination.
+`archived: true` (since 2026-10-20, bool, absent = false, checked by `check_look.py`) retires an area without deleting it: the entry
+stays loaded and `GET /api/v2/areas` and the Plan `areas` list carry `archived` (bool) for every area, so past events, tasks and
+ledger rows keep their name, short label and colour. An archived area is hidden from every picker and list that offers areas for
+NEW work (event form, memo form, legend entries nobody uses; screens that show history, such as the Ledger, keep it), is skipped by
+the `match` rules of §5.3, and the Plan refuses new items in it (§5.3 `plan/event`, `plan/task`). `folders`, `playbooks` and `projects`
+still map. The example set has no archived area.
 Removing an area = delete its entry; events, tasks and ledger rows that still carry the old id are shown as Unassigned (never migrated).
 Readers: `GET /api/v2/areas` (§5) serves it; the front end sets `--a-<id>` on `:root` from it at boot,
 so area colours are never duplicated in CSS.
@@ -431,7 +484,7 @@ and the block of `screens/team.css` between `/* creatures: verbatim from v1 */` 
 
 `py -3.12 tools/check_look.py [--json] <areas.yaml|look.css>…` → exit 0 when all pass, 1 otherwise;
 `--json` prints `{"ok": bool, "problems": ["..."]}`.
-* `areas.yaml`: parses; ids unique, `^[a-z][a-z0-9-]{0,15}$`; names non-empty; colours `#rrggbb`;
+* `areas.yaml`: parses; ids unique, `^[a-z][a-z0-9-]{0,15}$`; names non-empty; `archived` a boolean when present; colours `#rrggbb`;
   the colours, in file order, pass the **same five checks as the dataviz skill's validator** that
   approved them (`tools/vendor/validate_palette.js`, run in dark mode with surface = `--bg`): lightness
   band, chroma floor, adjacent-pair CVD separation ΔE ≥ 8 (OKLab ×100; 6-8 = WARN, legal only with
@@ -476,13 +529,13 @@ and served from a cache (ledger stats).
 
 | Method · path | Answer |
 | --- | --- |
-| `GET /api/v2/areas` | `{ok, areas: [{id, name, color, group}]}` from `areas.yaml` |
+| `GET /api/v2/areas` | `{ok, areas: [{id, name, color, group, archived}]}` from `areas.yaml` |
 | `GET /api/v2/attention` | `{ok, working: n, waiting: n, sessions: [{sid, title, area, status}], pending_reviews: n, team_error: string or null}`, sessions from `teamlive.snapshot()` (`status` ∈ `working` `waiting` `idle`; a session with a live helper is `working` even after its own turn ended, see "Live helpers" below), pending reviews from `plan.api.review_tray_count()` (import guarded: 0 if absent; *since 2026-10-15 the app bar no longer shows `pending_reviews`*, the key stays). **No `window` key:** the usage-window meter was removed 2026-10-10 (an estimate that never matched Claude's own meter; the real one is in the Claude desktop app), with its background refresher thread (`ATLAS_SHELL_NO_WINDOW_THREAD`), `shell_api.compute_window` and the v1 helpers `core/watcher.py` and `core/ledger.py` that fed it (`tools/import_v1_ledger.py` and the v1 data in `ledger/events.jsonl` are untouched) |
 | `GET /api/v2/team` | `teamlive.snapshot()` plus `area` per session (`area_for(areas, cwd)`); each session also carries `via_helpers` (bool) and `live_helpers` (`[{agent, name, label, bg}]`), see "Live helpers" below |
 | `GET /api/v2/shell/roster` | `{ok, helpers: [{id, model, use_for, never}], types: [{id, label, crew, budget, rung, move}], playbooks: [{command, area, crew, budget, per_task}]}`, read per request: helpers listed from the agent files (`ATLAS_AGENTS_DIR`, default `~/.claude/agents/*.md`, model from frontmatter); `use_for` and `never` verbatim from the `| Helper | Model | Use it for | Never |` table in the global instructions file (`ATLAS_TEAM_DOC`, default `~/.claude/CLAUDE.md`), falling back to the agent description / first Never line when the table is missing; a personal name in the table is rendered as "the operator", types and playbooks from `workflows.yaml` (`undeclared` skipped; `budget: null` = no rework; a playbook's `crew`/`budget` come from `playbook_crews`, budget falling back to `types.playbook.budget`; the Playbook type row renders "set per playbook (below)" instead of a crew) |
 | `GET /api/v2/ledger/*` | owned by Lane 1, see 5.2 |
 
-**Done sessions (2026-10-12, amended 2026-10-13).** The orchestrator closes a finished task with the no-op shell command `: team-done` (never from a helper). `hooks/team_events.py` matches it like the Atlas hook does: on the FIRST line of the command (capped at 200 characters), `^\s*:\s*team-done\b`, anything may follow (`: team-done now` and a `: team-done` followed by more lines count; `: team-doner` does not). It logs `{ev: "TeamDone", ts, sid, cwd}` and nothing else at PreToolUse, in the team-live log next to `WorkType`. In `teamlive`, a session is `done` when a main-session `TeamDone` (not `in_agent`) comes after its current task's opener (the latest `WorkType` or playbook command, the same anchor as the current-task window) AND no main-session (not `in_agent`) `UserPromptSubmit` comes after the last such `TeamDone`: when the operator writes again, the session stops being `done` (it is then working or waiting as usual) until the next `: team-done`. A newer opener also re-opens it, and a session with no opener is never `done`. `GET /api/v2/team` sessions carry `done` (bool). `waiting` is true only while the session is idle, the last main-session event is a Stop within 2 h AND the session is not `done`; `/api/v2/attention` follows `waiting`, so a done session reads `idle` there. `done` changes nothing else (`status`, hiding, timelines). The Team row shows a quiet `done` label where `waiting` would show. Known accepted limit: `TeamDone` is logged at PreToolUse, so in enforce mode a team-done refused by the done-lock still shows done until the next declaration or prompt; the ledger stays the record.
+**Done sessions (2026-10-12, amended 2026-10-13, 2026-10-29).** The orchestrator closes a finished task with the no-op shell command `: team-done` (never from a helper). `hooks/team_events.py` matches it like the Atlas hook does: on the FIRST line of the command (capped at 200 characters), `^\s*:\s*team-done\b`, anything may follow (`: team-done now` and a `: team-done` followed by more lines count; `: team-doner` does not). It logs `{ev: "TeamDone", ts, sid, cwd}` and nothing else at PreToolUse, in the team-live log next to `WorkType`. In `teamlive`, a session is `done` when a main-session `TeamDone` (not `in_agent`) comes after its current task's opener (the latest `WorkType` or playbook command, the same anchor as the current-task window) AND no real new work comes after the last such `TeamDone`: a main-session (not `in_agent`) `PreToolUse` with `tool` `Agent` (a helper launch) or `Skill`. A plain `UserPromptSubmit` does not clear `done`: a follow-up turn with no helper launch, skill or new declaration stays done; new work in the same session is declared with a new `: team-type` (or launches a helper or a skill), which re-opens it (it is then working or waiting as usual) until the next `: team-done`. A newer opener also re-opens it, and a session with no opener is never `done`. `GET /api/v2/team` sessions carry `done` (bool). `waiting` is true only while the session is idle, the last main-session event is a Stop within 2 h AND the session is not `done`; `/api/v2/attention` follows `waiting`, so a done session reads `idle` there. `done` changes nothing else (`status`, hiding, timelines). The Team row shows a quiet `done` label where `waiting` would show. Known accepted limit: `TeamDone` is logged at PreToolUse, so in enforce mode a team-done refused by the done-lock still shows done until the next declaration, playbook, helper launch (`Agent`) or `Skill` call; the ledger stays the record.
 
 **Live helpers (2026-10-10).** A session is `working` when its main conversation is working OR at least one of its
 helpers is live, background (`run_in_background`) or foreground alike. A helper is live when the event log has its
@@ -516,7 +569,7 @@ per content block); left as is, recorded in the build log.
 `tier` = opus/sonnet/haiku from the model id. Weeks are ISO weeks, local time. Definitions:
 the task list shows tasks whose span overlaps the week; KPIs count tasks by `ended` in the week;
 `first_pass_ready_pct` = closed tasks whose first verdict is READY ÷ closed tasks with ≥ 1 verdict;
-`rework_refused`: `value` = enforced + would, plus `split: {enforced, would}`, carry-over notices (`notice: true`) excluded; `time_by_area` = sum of task active time (`duration_s`); `rounds_hist.refused` = tasks with a real rework refusal (carry-over notices excluded);
+`rework_refused`: `value` = enforced + would, plus `split: {enforced, would}`, carry-over notices (`notice: true`) excluded; `time_by_area` = sum of task active time (`duration_s`), a task with no area or with an area id no longer in `areas.yaml` counted under `unassigned` (one row, 2026-10-15); `rounds_hist.refused` = tasks with a real rework refusal (carry-over notices excluded); the other buckets (0, 1, 2+) use each task's `rounds.own` (since 2026-10-26, so a carried count is not counted twice);
 `usage_by_day` and `usage_by_helper` are weighted (deduped, §1.5).
 *(Amended at the screen review 2026-10-09.)* `usage_by_type` = the week's weighted tokens per declared type
 of work (`kind: "type"`, key = the type) and per playbook (`kind: "playbook"`, key = `playbook:<cmd>`,
@@ -559,7 +612,7 @@ crew, status, verdict, review_min}]` (automatic sessions' actual time; feeds the
 ```json
 {"ok": true, "version": 412, "today": "2026-10-09",
  "areas": [{"id": "pers", "name": "Personal", "color": "#d55181", "attention": "full",
-            "attention_fixed": false, "short": "PERS"}],
+            "attention_fixed": false, "short": "PERS", "archived": false}],
  "events": [{"id": "evt_…", "occurrence": "2026-10-09", "title": "…", "day": "2026-10-09",
              "start": "10:00", "end": "11:00", "area": "pers", "area_source": "explicit|match|none",
              "attention": "shared|full", "attention_source": "fixed|event|area|default",
@@ -586,7 +639,7 @@ Recurring events are expanded to occurrences inside the range (same rules as v1 
 overrides). An event's area: its explicit `area` field (always wins), else the first area (file order) whose
 `match.title_prefix` starts its title, else the first area (file order) whose `match.keywords` has a WHOLE
 WORD anywhere in the title (case and accents ignored; `Run` does not match `Running`) (`area_source: "match"`
-for both), else `null`. `areas.yaml` format: `match: {title_prefix: [...], keywords: [...]}`, both keys optional.
+for both), else `null`. Archived areas are skipped by both match steps (an explicit `area` still resolves to them). `areas.yaml` format: `match: {title_prefix: [...], keywords: [...]}`, both keys optional.
 Titles are never rewritten automatically. Events may carry `task_of: <task id>` (additive, returned in `events`).
 An expanded event carries `done: true` when the event has `done: true` (single) or the occurrence date is in its
 `done_on` list (series); the key is absent otherwise. The mark is manual only: nothing sets it automatically, it
@@ -646,14 +699,14 @@ the Plan screen does not show the tray. Tray items: automatic tasks that finishe
 
 | Path | Body (besides `base`) | Effect |
 | --- | --- | --- |
-| `/api/v2/plan/event` | `{event: {id?, title, day, start?, end?, area?, attention?, type?, notes?, recur?}}` | upsert (new id `evt_<8 hex>` when absent) |
+| `/api/v2/plan/event` | `{event: {id?, title, day, start?, end?, area?, attention?, type?, notes?, recur?}}` | upsert (new id `evt_<8 hex>` when absent). 400 `area archived: <id>` when the event is new, or its area is being changed, to an archived area (an existing event that keeps its archived area can still be edited) |
 | `/api/v2/plan/event/delete` | `{id}` | delete |
 | `/api/v2/plan/event/move` | `{id, occurrence?, day, start?, end?}` | move (an occurrence of a recurring event = override) |
 | `/api/v2/plan/event/skip` | `{id, occurrence}` | skip one occurrence |
 | `/api/v2/plan/event/done` | `{id, occurrence?, done: bool}` | manual, optional done mark (own tracking). Single event: `done: true` stores `done: true`, `false` removes the key. Recurring event: `occurrence` required (400 if missing or not a real, unskipped occurrence), stored in a sorted `done_on: [iso, ...]` list (key removed when empty). Unknown id 404, stale base 409. No time guards (no time changes), idempotent. Answer `changed` = the event as stored |
 | `/api/v2/plan/placement/move` · `/delete` · `/add` | as v1 `/api/schedule/placement/*` | same semantics |
 | `/api/v2/plan/block` · `/block/delete` · `/block/move` | as v1 `/api/schedule/block*` | same semantics |
-| `/api/v2/plan/task` | `{task: {id?, area, title, state?, owner?, estimate_min?, reversible?}}` | upsert an area task in `tasks.yaml` |
+| `/api/v2/plan/task` | `{task: {id?, area, title, state?, owner?, estimate_min?, reversible?}}` | upsert an area task in `tasks.yaml`. 400 `area archived: <id>` when the task is new, or its area is being changed, to an archived area (state, move, done and delete of an existing one keep working) |
 | `/api/v2/plan/task/state` | `{id, state}` | move along todo → next → doing → review → done |
 | `/api/v2/plan/task/place` | `{id, target: "me"\|"agents", day, start, end}` | one locked write (both files when needed). `"me"`: creates an event in the calendar (`title` = task title, `area` = task area, `task_of: <id>`, the given slot; the client picks `estimate_min`, 60 when unknown) or MOVES the event already linked to that task, and sets `planned` on a `tasks.yaml` task (state unchanged; a `plan.yaml` task only gets the event). Same guards as an event save (window, all-day rule, attention guard). `"agents"` (parked, tolerated, no longer sent by the screen): sets the task's `planned` slot (only `owner: agents`, only `tasks.yaml` tasks; a `plan.yaml` task is 400 read-only); 400 `3 agents already busy HH:MM-HH:MM` when 3 agents' items already overlap inside the slot. **Never starts anything.** Unknown id 404, stale base 409, no plan file 503. Answer `changed` = the event (`me`) or the task (`agents`); `task` = the task as stored (`me`, `tasks.yaml` tasks) |
 | `/api/v2/plan/review/schedule` | `{id, day, start, end}` | creates an event in the operator's time (`area` = the item's, title `Review: <title>`, `review_of: <task_id>`); "scheduled" is derived from that field (one file written) |
@@ -735,7 +788,7 @@ backup `settings.json.bak-<timestamp>` first; idempotent: a second run changes n
 `team_events.py` and `require_named_helper.py` stay registered; `team_events.py` gets only the §0 one-line regex change.
 
 One script, `hooks/atlas_hook.py`, handles every event (`hook_event_name`), registered **sync**
-(guards must be able to deny) on: PreToolUse `Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage|mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__update_scheduled_task|RemoteTrigger`,
+(guards must be able to deny) on: PreToolUse `Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage|mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__update_scheduled_task|mcp__scheduled-tasks__run_scheduled_task|RemoteTrigger|mcp__ccd_session__start_session|mcp__ccd_session__hand_off_to_session|mcp__ccd_session_mgmt__send_message|mcp__ccd_session__spawn_task|mcp__ccd_session__move_to_cloud|Workflow`,
 PostToolUse `Agent|Edit|Write|NotebookEdit`, SubagentStart, SubagentStop, Stop, SessionStart,
 SessionEnd, UserPromptSubmit, UserPromptExpansion. Registration uses the same `command` (full
 `python.exe` path) + `args` form as the existing entries, never `py -3.12`. Timeout 5 s.
@@ -789,7 +842,20 @@ On PreToolUse Agent with `subagent_type` in `builders`: if the current task has
 blockers; only the operator can grant another round with /grant-rework."` Reviewers, test-runner and scout
 are never refused by this guard. Budget `null` (quick question) never applies (the lock does).
 While the guard is tripped, the **main session's** own non-exempt Edit/Write/NotebookEdit on that task
-is refused too (the orchestrator can't make the fixes itself past the budget). Type-switch carry-over: §1.2.
+is refused too (the orchestrator can't make the fixes itself past the budget). Helpers' edits and shell commands are
+never refused by this guard (no file lock, no recall, no shell guard). Carry-over and abandon: §1.2.
+**Other sessions (2026-10-26):** budget state is per session id, so while tripped the **main session** (no `agent_id`) is
+also refused the tools that start, drive or message ANOTHER session: `mcp__scheduled-tasks__create_scheduled_task`,
+`mcp__scheduled-tasks__update_scheduled_task`, `mcp__scheduled-tasks__run_scheduled_task`, `RemoteTrigger`,
+`mcp__ccd_session__start_session`, `mcp__ccd_session__hand_off_to_session`, `mcp__ccd_session_mgmt__send_message`,
+`mcp__ccd_session__spawn_task`, `mcp__ccd_session__move_to_cloud`, `Workflow` (it starts subagents without a PreToolUse Agent),
+a `CronCreate` with a truthy `durable`, and a `SendMessage` whose `to` is not a helper of this session or is an own BUILDER
+helper (resuming a builder is spawning one: the builder rework message above). A SendMessage to an own non-builder helper
+(reviewer) stays allowed and is still a `helper_resume`. A shell launch of the CLI is already refused in every mode except the
+info forms (`--version`, `-v`, `--help`, `-h`, `doctor`, `mcp list`, `mcp get <name>`), PowerShell `Start-Process` included (§6.4). Guard `rework`, `refusal` carries `tool` (the tool name only, never prompt or message text); record mode
+logs `would: true` and allows. Reason: `"Rework budget spent for this <type> task (<n> NEEDS CHANGES, budget <b>). Starting or
+messaging another session is refused too: bring the operator the blockers; only the operator can grant another round with /grant-rework."`
+Under budget, and for helpers, nothing changes.
 
 ### 6.3a Reminder: one task per piece of work (2026-10-10)
 The hook cannot infer pieces of work, so it nudges. On PreToolUse Agent in the main session, never blocking, at most
@@ -808,7 +874,7 @@ interactive entry: config `interactive_entries` (an allowlist; SUPERSEDED 2026-1
 `cli`, `claude-desktop`, `claude-vscode`, see §6.4a; the old text follows: empty during the record day = record
 the entry and grant; before enforce it is set to `["claude-desktop", "cli"]`, so an unknown or
 missing entry fails closed). It logs `rework_granted {n}` on the current task: `granted += n`,
-`escalated = false`. **Denied in every mode:** a Bash/PowerShell command that invokes `claude`
+`escalated = false`. The grant is plain: no `for_task`, no lock (the 2026-10-26 `for_task` form is legacy). **Denied in every mode:** a Bash/PowerShell command that invokes `claude`
 **as a command**: `(?:^|[;&|(]\s*|\s)claude(?:\.exe)?(?=\s)` where the match is not preceded by
 `.`, `/`, `\` or a word character, OR `[\\/]claude\.exe\b` (a claude called by its path), in both
 cases followed later in the same command by `\s(-p|--print|--resume)\b` (e.g. `claude --resume <sid>
@@ -900,7 +966,7 @@ entry must be in `interactive_entries`; an empty or missing list falls back to t
 `claude-vscode` (never "any entry"), because UserPromptSubmit also fires for prompts nobody typed (scheduled tasks,
 background reports, cross-session messages). **Forwarded prompts:** PreToolUse on `CronCreate`, `ScheduleWakeup`,
 `SendMessage`, `RemoteTrigger` and the desktop scheduled-tasks tools `mcp__scheduled-tasks__create_scheduled_task` and
-`mcp__scheduled-tasks__update_scheduled_task` (since 2026-10-13) is denied in every mode when a `prompt`/`message`/`content`/`text`/`body`/`summary` field (nested objects
+`mcp__scheduled-tasks__update_scheduled_task` (since 2026-10-13), plus `mcp__scheduled-tasks__run_scheduled_task`, `mcp__ccd_session__start_session`, `mcp__ccd_session__hand_off_to_session`, `mcp__ccd_session_mgmt__send_message`, `mcp__ccd_session__spawn_task`, `mcp__ccd_session__move_to_cloud` and `Workflow` (since 2026-10-26) is denied in every mode when a `prompt`/`message`/`content`/`text`/`body`/`summary`/`remaining_plan`/`background` field (nested objects
 too) starts with `/ack-break`, `/grant-rework`, `/allow-publish` (§6.4b) or `/allow-config` (§6.4c), logged `ignored` ("forged user-only command via <tool>"). A PreToolUse
 Skill for `ack-break` is denied in every mode and logged; a shell mention or a UserPromptExpansion alone does nothing.
 **The id is required.** With no id, an unknown id or an id that is not an unacknowledged break, nothing is acknowledged:
@@ -1128,7 +1194,12 @@ once per command.
 
 Not config: `.claude/projects/**` (memory and transcripts stay free), `.claude/worktrees/**` (except the file-name rule),
 everything else. The path forms of §6.5 apply: ANY form (absolute, real, stream-stripped) that matches counts. An edit on a
-config path is gated, not recorded as an `edit` (no version bump, no send-back).
+config path is gated at the pre-edit step. *(2026-10-19)* An edit the gate ALLOWED is recorded: `config_allowed` at the
+gate, then an ordinary `edit` event after the tool ran, which bumps the task version, so the done-lock (§6.5) and the Stop
+send-back need a check after it (operator decision, 2026-10-19). This holds even under an otherwise exempt folder
+(`~/.claude/**`, atlas-data, temp, §6.5): a config path is never exempt. The protected ledger and hooks folders stay exempt.
+A shell change let through by a grant is logged as `config_allowed` only; like any shell write it creates no `edit` event
+(honest limit). *(2026-10-19)*
 
 **Shell** (`config_shell`). The command is split like the bypass classifier (`;` `&` `|` newline), quotes removed, `/./`
 collapsed. A segment is gated when its text names a config path and `_segment_effect` (the bypass classifier's read /
@@ -1200,7 +1271,7 @@ are config names. Rule B also accepts the short names of the ledger folder and o
 **The grant.** `/allow-config` opens a 15-minute window (no count: one change often needs several edits). A user-only
 skill, a mirror of `/allow-publish` (§6.4b): `hooks/skills/allow-config/SKILL.md` with `disable-model-invocation: true`,
 installed by `tools/install_hooks.py`; the model invoking it through the Skill tool is denied in every mode (logged
-`ignored`); it is refused inside `CronCreate`, `ScheduleWakeup`, `SendMessage`, `RemoteTrigger` and the scheduled-tasks tools
+`ignored`); it is refused inside `CronCreate`, `ScheduleWakeup`, `SendMessage`, `RemoteTrigger`, the scheduled-tasks tools and the ccd_session tools
 (`USER_ONLY_RE`, §6.4a), and as the first prompt of a spawned `claude` (§6.4); it is honoured
 ONLY from UserPromptSubmit whose prompt STARTS with `/allow-config` (`^\s*/allow-config(?![\w-])`), never from a helper,
 and only on an interactive entry (§6.4a; otherwise `ignored` "config grant from non-interactive entry"). It needs no open
@@ -1245,13 +1316,13 @@ hash chain and the outside anchor remain the other layers, and the Ledger shows 
 
 ### 6.5 The done-lock
 * **Version:** each task has `version`, +1 on every non-exempt `edit`. Exempt paths: anything under
-  `~\.claude\` (memory, plans, skills, settings), the session's scratchpad / the system
+  `~\.claude\` (memory, plans; its config files are not exempt, see the end of this bullet), the session's scratchpad / the system
   temp dir, `<data>\`, and files whose name ends in `build-log.md` or `.notes.md`, and scratch files: a name that starts with `scratch-` and ends in `.md`, a name that ends in
   `.scratch.md`, or a `.md` / `.txt` file inside a folder named exactly `_scratch`. The path is normalised first;
   names match case-insensitively, on whole path components. Never scratch: any path with a component starting
   with `.` (`.claude`, `.github`), and the names `claude.md`, `claude.local.md`, `agent.md`, `agents.md`, `skill.md`,
-  `gemini.md`, `cmakelists.txt`, `requirements.txt`. A config path (§6.4c) is never recorded as an `edit` either: it is
-  gated instead.
+  `gemini.md`, `cmakelists.txt`, `requirements.txt`. *(2026-10-19)* A config path (§6.4c) the gate allowed IS recorded as an `edit`
+  (it bumps the version and needs a check before done), even under an exempt folder above (a config path is never exempt).
 * **Path forms (2026-10-13).** Every path check looks at TWO forms of the path: the absolute one (`norm_path`) and the
   real one (`realpath`, so junctions and symlinks are resolved; if it cannot be resolved the absolute form stands in),
   and the same two forms of each root (ledger dir, hooks dirs, anchor clone, exempt dirs). Fail-safe: a path is
@@ -1264,7 +1335,13 @@ hash chain and the outside anchor remain the other layers, and the Ledger shows 
 * **Closing:** PreToolUse `: team-done`: allowed when the task's type has `needs_check: false` and
   no edits, or `version == 0`, or a READY verdict (or ok check) exists at `version == current`.
   Otherwise refuse: `"Not closed: version <v> has no passing review (last READY at version <m>). Run
-  the reviewer on the final version, then close."`
+  the reviewer on the final version, then close."` Also refused (guard `done_lock`, since 2026-10-26), whatever the
+  version or budget (so a task worked only through the shell cannot slip out): a task with an open failing review,
+  `(nc_count > 0 and not task_resolved) or escalated`: `"Not closed: the last review of this task did not pass. Run a fresh
+  reviewer on the fixed work, or declare the next piece of work (this task is then recorded as abandoned with open
+  findings)."` Either check failing refuses (record mode logs `would: true` and still closes). A READY from a reviewer
+  launched after the latest NEEDS CHANGES resolves it and the task closes normally; an escalated one stays refused until a
+  grant clears `escalated` or it is resolved.
 * **Stop send-back:** on Stop, if the current task is open, `needs_check` (or it has edits), `version
   > last_verified`, `stop_hook_active` is false, `sent_back_for != version`, **and no pending builder younger than 2 h
   is still running** (a builder `helper_start` with no `helper_end`): block once with
@@ -1276,6 +1353,21 @@ hash chain and the outside anchor remain the other layers, and the Ledger shows 
 While the current task's type is `quick-question`: PreToolUse Edit/Write/NotebookEdit on a non-exempt
 path → refuse `"A quick question can't change files: declare a type with a checker first (: team-type
 coding|writing|chore …)."`; PreToolUse Agent with any type other than `scout` → refuse likewise.
+
+### 6.6a The declare guard (2026-10-15)
+PreToolUse `Agent`, in the **main session only** (never inside a helper's scope, `agent_id` empty), when the session
+has no open declared task → refuse with:
+
+> Declare the work before launching a helper: run `: team-type <type> [area]` on its own (coding, research, writing,
+> legal, chore, quick-question; add the area when the folder is not the topic's), then launch the helper again.
+
+Declared = an open task whose type is not `undeclared`: opened by `: team-type`
+(`work_type`, any type, `quick-question` included) or by a playbook (`playbook`). Not declared = no task yet, the last
+task closed by `: team-done`, or the open task is the implicit `undeclared` one opened by an edit. Logged as
+`refusal {guard: "declare", would, helper, label, tuid, detail}` (§1.2; `would: true` in record mode, where the spawn
+is allowed; no prompt text, no tool input). Its `task` is the session's last task, which may already be closed; reports
+never let a `declare` refusal change a task's result. It is a nudge, not a barrier: any declaration lets the spawn through. It runs before the §6.6 and §6.3 checks. Edits without a declaration still open the
+implicit `undeclared` task; nothing else changes. The daily check counts `declare` among the normal-flow refusals.
 
 ### 6.7 Modes: record-only first
 `atlas_config.json` → `"mode": "record"` or `"enforce"`. In **record** mode every guard computes its
@@ -1293,6 +1385,18 @@ On PostToolUse Edit/Write of a file named `areas.yaml` or `look.css` inside a gi
 log a `check` event; if it fails, return `additionalContext` with the problems (both modes; it
 informs, never blocks). An edit to `areas.yaml` or `workflows.yaml` also refreshes the hooks' JSON
 fallback copies.
+
+### 6.9 Edit reminder (3-edit rule)
+On PostToolUse Edit/Write, for a non-exempt edit by the MAIN session (no `agent_id`) on a task where the reminder
+applies, the hook counts main-session edits per task (reset
+when a task opens; helper edits do not count). On the 3rd, 6th, 9th, ... it returns `additionalContext`: "3-edit rule:
+this is the main session's 3rd edit on this task. Brief implementer (code) or drafter (text) with the rest, unless the
+change is tiny or a hard case." (`6th`, `9th`, ...). It joins a check failure message when both apply. It informs,
+never blocks, in both modes; no ledger event is written and no text is stored. Any error in it is swallowed.
+The reminder applies when: the type's crew (`workflows.yaml`) includes a builder; the type is `undeclared` (its real
+type is unknown); the type is a playbook whose `playbook_crews` entry includes a builder, or that playbook is not
+listed there. It is also assumed to apply when the type is not listed in `workflows.yaml`, `workflows.yaml` is
+unreadable, or a crew is not a list (malformed).
 
 ---
 
@@ -1423,7 +1527,7 @@ are `--m-*` everywhere (charts and legends).
 *(2026-10-11, readability.)* The task table reads at a glance: the name is `title` (session title as a muted second
 line when different); the column "Rework rounds" shows "{own} of {budget}" (budget null = "no budget"), plus
 " +N granted" and a muted second line "N carried over"; statuses read in plain words (open = in progress, done = closed,
-ended = session ended, switched = next task started); a READY task never also reads "Refused, over budget". Crew and
+ended = session ended, switched = next task started, abandoned = abandoned with open findings); a READY task never also reads "Refused, over budget". Crew and
 helper names on this screen are the roster names (`rosterName` in `kit/format.js`: chief = orchestrator, the eight agent
 ids as they are, unknown types as they are); the Team screen (creature strip, session rows, roster table) uses them too: one name per helper,
 the persona names are gone (the creature artwork and its internal keys are unchanged). Every task-table header and the "Rung" header carry a hover tooltip (`#tip`);

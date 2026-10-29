@@ -16,6 +16,18 @@ except ImportError:  # pragma: no cover
     import store  # type: ignore
 
 TTL_S = 60
+
+
+def _known_area_ids() -> set[str]:
+    """The area ids in areas.yaml, empty (no merging) when the file cannot be read."""
+    try:
+        try:
+            from . import areas
+        except ImportError:  # pragma: no cover
+            import areas  # type: ignore
+        return {a["id"] for a in areas.load_areas() if a.get("id")}
+    except Exception:  # noqa: BLE001
+        return set()
 _lock = threading.Lock()
 _cache: dict[str, tuple[float, dict]] = {}
 _running: set[str] = set()
@@ -230,8 +242,11 @@ def compute(week: str | None = None) -> dict:
 
     wk_end = mon + dt.timedelta(days=6)
     area_secs: dict[str, int] = {}
+    known = _known_area_ids()
     for t in _in_week(closed, mon):
         a = t.get("area") or "unassigned"
+        if known and a not in known:                     # an area since removed from areas.yaml: one Unassigned row
+            a = "unassigned"
         area_secs[a] = area_secs.get(a, 0) + int(t.get("duration_s") or 0)
     time_by_area = sorted(({"area": a, "hours": round(s / 3600, 2)} for a, s in area_secs.items()),
                           key=lambda x: -x["hours"])
@@ -243,7 +258,8 @@ def compute(week: str | None = None) -> dict:
         if any(r.get("guard") == "rework" and not r.get("notice") for r in t.get("refusals") or []):
             hist["refused"] += 1
         else:
-            hist[str(min(2, (t.get("rounds") or {}).get("needs_changes", 0)))] += 1
+            r = t.get("rounds") or {}          # own rounds: carried or recalled ones are counted on the task that earned them
+            hist[str(min(2, r.get("own", r.get("needs_changes", 0))))] += 1
 
     by_helper: dict[tuple, float] = {}
     for d, h, tr, w in costs:

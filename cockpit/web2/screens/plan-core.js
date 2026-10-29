@@ -280,6 +280,13 @@ export function allDayTitleOn(events, day, exceptId) {
   const e = (events || []).find((x) => x.day === day && !x.start && x.id !== exceptId);
   return e ? String(e.title || "") : "";
 }
+/** Areas offered for NEW work: archived ones are left out, except `keepId` (the area an item being edited already has). */
+export function openAreas(areas, keepId) { return (areas || []).filter((a) => a.archived !== true || (keepId && a.id === keepId)); }
+/** Areas shown in the calendar legend: the open ones plus any archived area still used by a listed event (history keeps its key). */
+export function legendAreas(areas, events) {
+  const used = new Set((events || []).map((e) => e.area).filter(Boolean));
+  return (areas || []).filter((a) => a.archived !== true || used.has(a.id));
+}
 /** Colour token for an area id. An id that is not a known area (removed, null) gets the neutral Unassigned colour, like app.js areaColor. */
 export function areaVar(areas, id) { return id && (areas || []).some((a) => a.id === id) ? "var(--a-" + id + ")" : "var(--ctx-2)"; }
 

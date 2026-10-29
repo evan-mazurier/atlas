@@ -36,7 +36,7 @@ from ledger2 import query, stats, store  # noqa: E402
 LABEL_MAX = 50
 ANCHOR_HOUR = 21
 DEFAULT_SERVER_URL = "http://127.0.0.1:8765/api/v2/areas"
-GUARDS = ("rework", "publish", "config", "done_lock", "quick_question")
+GUARDS = ("rework", "publish", "config", "done_lock", "quick_question", "declare")
 ORDER = {"red": 0, "amber": 1, "green": 2}
 
 
@@ -88,7 +88,8 @@ def task_label(t: dict, plans: dict | None = None) -> str:
 
 def result_of(t: dict) -> str:
     """Same priority as verdictParts in ledger-model.js."""
-    real = [r for r in (t.get("refusals") or []) if r.get("would") is False and not r.get("notice")]
+    real = [r for r in (t.get("refusals") or []) if r.get("would") is False and not r.get("notice")
+            and r.get("guard") != "declare"]      # a declare refusal never relabels a task
     refused = next((r for r in real if r.get("guard") == "rework"), real[0] if real else None)
     fv = t.get("final_verdict")
     if refused and fv != "READY":
@@ -205,7 +206,7 @@ def check_refusals(events: list[dict]) -> list[dict]:
     for g in ("rework", "done_lock"):
         if c[g]:
             out.append(_line(f"Refusals: {g}", "amber", f"{c[g]} on the day"))
-    info = [f"{g} {c[g]}" for g in ("publish", "config", "quick_question") if c[g]]
+    info = [f"{g} {c[g]}" for g in ("publish", "config", "quick_question", "declare") if c[g]]
     if c["_would"]:
         info.append(f"would-have (record mode) {c['_would']}")
     if info:

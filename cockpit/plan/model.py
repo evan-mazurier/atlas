@@ -73,11 +73,15 @@ def event_area(ev: dict, areas: list[dict]) -> tuple[str | None, str]:
         return str(explicit), "explicit"
     title = _fold(ev.get("title"))
     for a in areas:
+        if a.get("archived") is True:
+            continue
         m = a.get("match")
         for p in _as_list(m.get("title_prefix") if isinstance(m, dict) else None):
             if title.startswith(_fold(p)):
                 return a["id"], "match"
     for a in areas:
+        if a.get("archived") is True:
+            continue
         m = a.get("match")
         for k in _as_list(m.get("keywords") if isinstance(m, dict) else None):
             if re.search(r"(?<!\w)" + re.escape(_fold(k)) + r"(?!\w)", title):
@@ -445,7 +449,8 @@ def build(sched: dict, tdoc: dict, frm: dt.date, to: dt.date, version: int, runs
     return {"ok": True, "version": version, "today": dt.date.today().isoformat(),
             "areas": [{"id": a["id"], "name": a.get("name"), "color": a.get("color"),
                       "attention": area_attention(a), "attention_fixed": a.get("attention_fixed") is True,
-                      "short": a.get("short") or str(a["id"]).upper()[:5]} for a in areas],
+                      "short": a.get("short") or str(a["id"]).upper()[:5],
+                      "archived": a.get("archived") is True} for a in areas],
             "events": events, "placements": placements, "work_blocks": blocks,
             "availability": availability,
             "agents": agents_lanes(frm, to, own, areas, runs),

@@ -43,7 +43,7 @@ def test_areas_endpoint_lists_the_six_in_order():
     code, d = shell_api.get("/api/v2/areas", {})
     assert code == 200 and d["ok"]
     assert [a["id"] for a in d["areas"]] == ["md", "job", "train", "atlas", "admin", "pers"]
-    assert d["areas"][0] == {"id": "md", "name": "Product", "color": "#d95926", "group": "Product"}
+    assert d["areas"][0] == {"id": "md", "name": "Product", "color": "#d95926", "group": "Product", "archived": False}
 
 
 def test_unknown_path_is_not_mine():

@@ -110,6 +110,14 @@ def trip(env):
     assert env.state()["needs_changes"] == 3
 
 
+def _age_task(env):
+    """Age the open task past the 60 s duplicate window so a same-type re-declaration is a real one."""
+    sp = env.ledger / "state" / f"{SID}.json"
+    S = json.loads(sp.read_text(encoding="utf-8"))
+    S["task_t"] = "2020-01-01T00:00:00+00:00"
+    sp.write_text(json.dumps(S), encoding="utf-8")
+
+
 # ------------------------------------------------------------------ fail open
 
 @pytest.mark.parametrize("text", ["", "not json", "[]", "{}", '{"session_id": 5}', "\xff\xfe", "null"])
@@ -233,9 +241,14 @@ def test_rework_guard_enforce_denies_with_documented_json(env):
 def test_budget_zero_and_distinct_versions(env):
     env.bash(": team-type coding")
     env.edit("a.py")
-    # reviewer and senior-reviewer both fail the SAME version: one round burned
-    env.review("r1", "A1", "NEEDS_CHANGES\n- x")
-    env.review("r2", "A2", "NEEDS_CHANGES\n- y", helper="senior-reviewer")
+    # reviewer and senior-reviewer launched together both fail: one round burned
+    env.agent("reviewer", "r1")
+    env.run("SubagentStart", agent_id="A1", agent_type="reviewer")
+    env.agent("senior-reviewer", "r2")
+    env.run("SubagentStart", agent_id="A2", agent_type="senior-reviewer")
+    for aid, h, txt in (("A1", "reviewer", "NEEDS_CHANGES\n- x"), ("A2", "senior-reviewer", "NEEDS_CHANGES\n- y")):
+        env.run("PreToolUse", tool_name="SubagentHandback", agent_id=aid, agent_type=h, tool_input={"message": txt})
+        env.run("SubagentStop", agent_id=aid, agent_type=h, last_assistant_message="")
     assert env.state()["needs_changes"] == 1
 
 
@@ -325,14 +338,16 @@ def test_model_cannot_invoke_grant_skill_even_in_record_mode(env):
 
 # ------------------------------------------------------------------ type switch carry-over
 
-def test_type_switch_carries_spent_budget(env):
+def test_type_switch_abandons_a_spent_task_and_opens_fresh(env):
     trip(env)
     env.bash(": team-type writing")
+    ab = env.events("task_abandoned")[-1]
+    assert ab["task"] == "s1abcdef-1" and ab["needs_changes"] == 3 and ab["granted"] == 0 and "paths" not in ab
     wt = env.events("work_type")[-1]
-    assert wt["type"] == "writing" and wt["carried"] is True
+    assert wt["type"] == "writing" and not wt.get("carried")
     S = env.state()
-    assert S["needs_changes"] == 3 and S["budget"] == 2 and S["task"] == "s1abcdef-2"
-    assert env.events("refusal")[-1]["guard"] == "rework"
+    assert S["needs_changes"] == 0 and S["budget"] == 2 and S["task"] == "s1abcdef-2" and S["granted"] == 0
+    assert not env.events("refusal")
 
 
 def test_type_switch_without_spent_budget_resets(env):
@@ -663,14 +678,14 @@ def test_hook_stream_derives_to_same_numbers_as_state_cache(env):
     sys.path.insert(0, str(REPO / "cockpit"))
     from ledger2 import derive, query
     trip(env)
-    env.bash(": team-type writing")        # carried budget
+    env.bash(": team-type writing")        # abandons the spent task, opens fresh
     env.edit("b.py")
     env.review("r9", "A9", "READY")
     env.bash(": team-done")
     tasks = derive.derive_v2(env.events(), query.load_workflows())
     t1, t2 = tasks
-    assert t1["rounds"]["needs_changes"] == 3 and t1["status"] == "switched"
-    assert t2["type"] == "writing" and t2["rounds"]["needs_changes"] == 3 and t2["rounds"]["budget"] == 2
+    assert t1["rounds"]["needs_changes"] == 3 and t1["status"] == "abandoned"
+    assert t2["type"] == "writing" and t2["rounds"]["needs_changes"] == 0 and t2["rounds"]["budget"] == 2
     assert t2["status"] == "done" and t2["checked"] is True and t2["unverified_flag"] is False
     S = env.state()
     assert S["needs_changes"] == t2["rounds"]["needs_changes"] and S["version"] == t2["edits"]
@@ -684,7 +699,7 @@ def test_state_rebuilds_from_events_when_cache_is_deleted(env):
     out = env.agent("implementer", "b1")                  # decision needs the rebuilt state
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     after = env.state()
-    for k in ("task", "version", "nc_versions", "budget", "type"):
+    for k in ("task", "version", "nc_rounds", "budget", "type"):
         assert after[k] == before[k]
 
 
@@ -758,25 +773,35 @@ def test_carried_rounds_do_not_collide_with_new_task_versions(env):
     env.review("r1", "A1", "NEEDS_CHANGES\n- a")      # NC at version 1
     env.edit("a.py")
     env.review("r2", "A2", "NEEDS_CHANGES\n- a")      # NC at version 2
-    env.bash(": team-type chore")                       # carry: 2 rounds, budget min(2, 1) = 1
-    S = env.state()
-    assert S["needs_changes"] == 2 and S["budget"] == 1 and S["version"] == 0
+    env.bash(": team-type chore")                       # abandons; the fresh chore (budget 1) is the chain's first link
     env.edit("b.py")
-    env.review("r3", "A3", "NEEDS_CHANGES\n- a")      # NC at the NEW task's version 1: must add, not collide
+    env.review("r3", "A3", "NEEDS_CHANGES\n- a")      # spent again (1 >= 1)
+    _age_task(env)
+    env.bash(": team-type chore")                       # chained and spent: carry, 1 round, budget 1
     S = env.state()
-    assert S["needs_changes"] == 3
+    assert S["needs_changes"] == 1 and S["budget"] == 1 and S["version"] == 0
+    env.edit("c.py")
+    env.review("r4", "A4", "NEEDS_CHANGES\n- a")      # NC at the NEW task's version 1: must add, not collide
+    S = env.state()
+    assert S["needs_changes"] == 2
     env.set_mode("enforce")
     assert env.agent("implementer", "b1")["hookSpecificOutput"]["permissionDecision"] == "deny"
     sys.path.insert(0, str(REPO / "cockpit"))
     from ledger2 import derive, query
-    t2 = derive.derive_v2(env.events(), query.load_workflows())[1]
-    assert t2["rounds"]["needs_changes"] == 3
+    t3 = derive.derive_v2(env.events(), query.load_workflows())[2]
+    assert t3["rounds"]["needs_changes"] == 2 and t3["rounds"]["own"] == 1
 
 
 def test_carry_refusal_is_not_counted_as_enforced(env):
     trip(env)
     env.set_mode("enforce")
-    env.bash(": team-type writing")
+    env.bash(": team-type writing")                     # abandons: a fresh chained task
+    env.edit("b.py")
+    env.review("r5", "A5", "NEEDS_CHANGES\n- a")
+    env.edit("b.py")
+    env.review("r6", "A6", "NEEDS_CHANGES\n- a")
+    _age_task(env)
+    env.bash(": team-type research")                    # chained and spent: carries, with the notice
     r = [e for e in env.events("refusal") if "carry-over" in e["detail"]]
     assert r and r[-1]["would"] is True
 
@@ -897,18 +922,26 @@ def test_forward_texts_walk_lists_and_just_opened_window(env):
 
 
 
-def test_same_type_redeclaration_after_the_window_still_carries_a_spent_budget(env):
+def test_same_type_redeclaration_after_the_window_abandons_then_a_chained_spent_task_carries(env):
     trip(env)
     env.set_mode("enforce")
-    sp = env.ledger / "state" / f"{SID}.json"
-    S = json.loads(sp.read_text(encoding="utf-8"))
-    S["task_t"] = "2020-01-01T00:00:00+00:00"                 # age the open task past the 60 s duplicate window
-    sp.write_text(json.dumps(S), encoding="utf-8")
+    _age_task(env)
     env.bash(": team-type coding")
     wt = env.events("work_type")[-1]
-    assert wt["task"] == "s1abcdef-2" and wt["carried"] is True
+    assert wt["task"] == "s1abcdef-2" and not wt.get("carried") and env.events("task_abandoned")[-1]["needs_changes"] == 3
+    assert env.agent("implementer", "b1") is None            # fresh budget: the spawn is allowed
+    env.edit("b.py")
+    env.review("r8", "A8", "NEEDS_CHANGES\n- one")
+    env.edit("b.py")
+    env.review("r9", "A9", "NEEDS_CHANGES\n- one")
+    env.edit("b.py")
+    env.review("r10", "A10", "NEEDS_CHANGES\n- one")        # 3 > 2: spent, still chained
+    _age_task(env)
+    env.bash(": team-type coding")
+    wt = env.events("work_type")[-1]
+    assert wt["task"] == "s1abcdef-3" and wt["carried"] is True
     assert env.events("refusal")[-1]["guard"] == "rework" and env.events("refusal")[-1]["would"] is True
-    out = env.agent("implementer", "b1")
+    out = env.agent("implementer", "b2")
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 

@@ -195,14 +195,14 @@ def test_memo_and_place_ops_and_memos_command(server, capsys, tmp_path):
     code, out = run(server, capsys, "apply", write_ops(tmp_path, ops))
     assert code == 0 and "1. memo ok t_" in out.out
     rows = [ln.split("\t") for ln in run(server, capsys, "memos")[1].out.strip().splitlines()]
-    assert [(r[1], r[2], r[3], r[4]) for r in rows] == [("MD", "90", "open", "Write pitch"), ("ATL", "", "open", "No estimate")]
+    assert [(r[1], r[2], r[3], r[4]) for r in rows] == [("PROD", "90", "open", "Write pitch"), ("OPS", "", "open", "No estimate")]
     pitch, bare = rows[0][0], rows[1][0]
     # end defaults to start + estimate (90 min), or 60 min when the task has none
     ops = [{"op": "place", "task": pitch, "day": DAY, "start": "09:00"},
            {"op": "place", "task": bare, "day": DAY, "start": "13:00"}]
     assert run(server, capsys, "apply", write_ops(tmp_path, ops))[0] == 0
     shown = run(server, capsys, "show", "--day", DAY)[1].out
-    assert "09:00-10:30\tMD" in shown and "13:00-14:00\tATL" in shown
+    assert "09:00-10:30\tPROD" in shown and "13:00-14:00\tOPS" in shown
     rows = [ln.split("\t") for ln in run(server, capsys, "memos")[1].out.strip().splitlines()]
     assert [r[3] for r in rows] == [f"planned {DAY} 09:00", f"planned {DAY} 13:00"]
     # an explicit end is kept; placing again moves the same event

@@ -606,12 +606,13 @@ def _analyse(sid: str, evs: list[dict], now: dt.datetime, cost_fn, helper_mtime_
     last_main = next((e for e in reversed(evs) if not e.get("in_agent")
                       and e.get("ev") not in ("SubagentStart", "SubagentStop", "TeamDone")), None)
     # done: the current task (since its latest opener) was closed by `: team-done` (a main-session TeamDone after
-    # the opener) AND the person has not written since: no main-session UserPromptSubmit after the last such TeamDone.
-    # A new opener also re-opens it. A done session is never "waiting"; status, hiding and timelines are unchanged.
+    # the opener) AND no real new work came after the last such TeamDone: no main-session PreToolUse of a helper launch
+    # (tool Agent) or a Skill. A plain UserPromptSubmit (thanks, a quick question) does NOT clear it. A new opener
+    # (WorkType or playbook) also re-opens it. A done session is never "waiting"; status, hiding and timelines are unchanged.
     last_done = max((i for i in range(anchor + 1, len(evs)) if evs[i].get("ev") == "TeamDone" and not evs[i].get("in_agent")),
                     default=-1) if anchor >= 0 else -1
-    done = bool(last_done >= 0 and not any(e.get("ev") == "UserPromptSubmit" and not e.get("in_agent")
-                                           for e in evs[last_done + 1:]))
+    done = bool(last_done >= 0 and not any(e.get("ev") == "PreToolUse" and e.get("tool") in ("Agent", "Skill")
+                                           and not e.get("in_agent") for e in evs[last_done + 1:]))
     waiting = bool(not live and not done and last_main is not None and last_main.get("ev") == "Stop"
                    and now - last_main["_t"] <= WAITING_WINDOW)
     hidden = ended or (not live and now - last_t > IDLE_HIDE)

@@ -47,6 +47,83 @@ def _cache_ratio(tasks: list[dict]):
     return round(100.0 * cr / tot, 1) if tot else None
 
 
+def _edit_times(events: list[dict], builders: set):
+    """Edit times per task: (builder edits, main-session edits). Agent ids map to helpers via the pairing events."""
+    agent_helper: dict[str, str] = {}
+    for e in events:
+        if e.get("ev") in ("helper_paired", "helper_end") and e.get("agent_id") and e.get("helper"):
+            agent_helper[e["agent_id"]] = e["helper"]
+    builder_times: dict[str, list] = {}
+    main_times: dict[str, list] = {}
+    for e in events:
+        if e.get("ev") != "edit" or not e.get("task"):
+            continue
+        when = derive.parse_t(e.get("t"))
+        if when is None:
+            continue
+        aid = e.get("agent_id")
+        if not aid:
+            main_times.setdefault(e["task"], []).append(when)
+        elif agent_helper.get(aid) in builders:
+            builder_times.setdefault(e["task"], []).append(when)
+    return builder_times, main_times
+
+
+def _hidden_rework(ts: list[dict], events: list[dict], builders: set) -> list[str]:
+    """Ids of tasks with verdicts where a main-session edit fell after the first builder edit and before the first verdict."""
+    builder_times, main_times = _edit_times(events, builders)
+    out = []
+    for t in ts:
+        if not t.get("verdicts") or t["id"] not in builder_times:
+            continue
+        fv = derive.parse_t(t["verdicts"][0].get("t"))
+        if fv is None:
+            continue
+        first_builder = min(builder_times[t["id"]])
+        if any(first_builder < m < fv for m in main_times.get(t["id"], [])):
+            out.append(t["id"])
+    return out
+
+
+BUILT_BY = ("orchestrator only", "helper only", "both", "no file edits")
+
+
+def _rate_rows(counts: dict) -> list[dict]:
+    rows = [{"key": k, "ready": r, "reviewed": n, "pct": round(100.0 * r / n, 1)} for k, (r, n) in counts.items() if n]
+    rows.sort(key=lambda x: (-x["reviewed"], x["key"]))
+    return rows
+
+
+def _first_pass_breakdown(ts: list[dict], events: list[dict], builders: set):
+    """First-pass READY per type and per who built (edits strictly before the first verdict)."""
+    builder_times, main_times = _edit_times(events, builders)
+    by_type: dict[str, list] = {}
+    by_built: dict[str, list] = {}
+    for t in ts:
+        if not t.get("verdicts"):
+            continue
+        ready = 1 if t["verdicts"][0]["verdict"] == "READY" else 0
+        c = by_type.setdefault(t.get("type") or "undeclared", [0, 0])
+        c[0] += ready
+        c[1] += 1
+        fv = derive.parse_t(t["verdicts"][0].get("t"))
+        has_m = fv is not None and any(m < fv for m in main_times.get(t["id"], []))
+        has_b = fv is not None and any(b < fv for b in builder_times.get(t["id"], []))
+        key = BUILT_BY[2] if has_m and has_b else BUILT_BY[0] if has_m else BUILT_BY[1] if has_b else BUILT_BY[3]
+        c = by_built.setdefault(key, [0, 0])
+        c[0] += ready
+        c[1] += 1
+    return _rate_rows(by_type), _rate_rows(by_built)
+
+
+def _strict_first_pass(ts: list[dict], hidden: list[str]):
+    with_v = [t for t in ts if t.get("verdicts")]
+    if not with_v:
+        return None
+    ok = sum(1 for t in with_v if t["verdicts"][0]["verdict"] == "READY" and t["id"] not in hidden)
+    return round(100.0 * ok / len(with_v), 1)
+
+
 def compute(week: str | None = None) -> dict:
     mon = stats.week_monday(week)
     sun = mon + dt.timedelta(days=6)
@@ -61,9 +138,16 @@ def compute(week: str | None = None) -> dict:
     prev_ts = stats._in_week(closed, mon - dt.timedelta(weeks=1))
     ids = {t["id"] for t in ts}
 
-    events = store.read_events(day_from=(mon - dt.timedelta(days=1)).isoformat(),
+    # tasks closed this week may have started earlier: read from the earliest local start date among them
+    starts = [d - dt.timedelta(days=1) for t in ts if (d := stats._local_date(t.get("started")))]
+    ev_from = min([mon - dt.timedelta(days=1)] + starts)
+    events = store.read_events(day_from=ev_from.isoformat(),
                                day_to=(sun + dt.timedelta(days=1)).isoformat())
     wk_events = [e for e in events if (d := stats._local_date(e.get("t"))) and mon <= d <= sun]
+
+    hidden = _hidden_rework(ts, events, builders)
+    strict_pct = _strict_first_pass(ts, hidden)
+    fp_type, fp_built = _first_pass_breakdown(ts, events, builders)
 
     time_area, time_type = {}, {}
     use_area, use_type, use_model, use_tier, use_helper = {}, {}, {}, {}, {}
@@ -86,7 +170,8 @@ def compute(week: str | None = None) -> dict:
     enforced, would = stats._refusals(ts)
     hist = {"0": 0, "1": 0, "2+": 0}
     for t in ts:
-        n = (t.get("rounds") or {}).get("needs_changes", 0)
+        rr = t.get("rounds") or {}
+        n = rr.get("own", rr.get("needs_changes", 0))          # own rounds: a carried count belongs to the task that earned it
         hist["2+" if n >= 2 else str(n)] += 1
     with_v = [t for t in ts if t.get("verdicts")]
 
@@ -128,16 +213,19 @@ def compute(week: str | None = None) -> dict:
         "tasks": {
             "closed": len(ts), "done": sum(1 for t in ts if t["status"] == "done"),
             "by_status": _rank_count(ts, "status"), "by_src": _rank_count(ts, "src"),
-            "first_pass_ready_pct": stats._first_pass(ts), "checked": sum(1 for t in ts if t.get("checked")),
+            "first_pass_ready_pct": stats._first_pass(ts), "first_pass_ready_strict_pct": strict_pct, "checked": sum(1 for t in ts if t.get("checked")),
         },
         "time_hours": {"total": round(sum(time_area.values()), 2),
                        "by_area": _rank(time_area, 2), "by_type": _rank(time_type, 2)},
         "usage_weighted": {"total_task_cost": int(sum(use_area.values())), "total_cost_events": int(cost_total),
                            "by_area": _rank(use_area), "by_type": _rank(use_type),
                            "by_model": _rank(use_model), "by_tier": _rank(use_tier), "by_helper": _rank(use_helper)},
-        "review": {"needs_changes_rounds": sum((t.get("rounds") or {}).get("needs_changes", 0) for t in ts),
+        "review": {"needs_changes_rounds": sum((t.get("rounds") or {}).get("own", (t.get("rounds") or {}).get("needs_changes", 0))
+                                                 for t in ts),
+                   "abandoned": sum(1 for t in ts if t.get("status") == "abandoned"),
                    "tasks_by_rounds": hist, "tasks_with_verdicts": len(with_v),
-                   "caught": sum(t.get("caught") or 0 for t in ts)},
+                   "caught": sum(t.get("caught") or 0 for t in ts), "hidden_rework_tasks": hidden,
+                   "first_pass_by_type": fp_type, "first_pass_by_builder": fp_built},
         "refusals": {"enforced": enforced, "would": would},
         "unverified": [t["id"] for t in ts if t.get("unverified_flag")],
         "waste": {
@@ -173,9 +261,15 @@ def _kv(items: list[dict], unit: str = "", fmt=lambda v: f"{v:,}") -> list[list]
     return [[i["key"], fmt(i["value"]) + unit] for i in items]
 
 
+def _fp_rows(items: list[dict]) -> list[list]:
+    return [[i["key"], i["reviewed"], i["ready"], f"{i['pct']} %"] for i in items]
+
+
 def numbers_md(r: dict) -> str:
     t, u, rv, w = r["tasks"], r["usage_weighted"], r["review"], r["waste"]
     fp = t["first_pass_ready_pct"]
+    sfp = t["first_pass_ready_strict_pct"]
+    hid = rv["hidden_rework_tasks"]
     L = [
         N_START, "",
         "## Numbers", "",
@@ -184,6 +278,9 @@ def numbers_md(r: dict) -> str:
         "### Tasks", "",
         f"- Closed: {t['closed']} (done: {t['done']}); first-pass READY: {'n/a' if fp is None else f'{fp} %'}; "
         f"checked at the final version: {t['checked']}",
+        f"- First-pass READY, strict (no main-session edits on a builder's work before the first verdict): "
+        f"{'n/a' if sfp is None else f'{sfp} %'}; hidden rework: {len(hid)} task(s)"
+        + (f" ({', '.join(hid)})" if hid else ""),
         f"- Automatic sessions: {r['auto']['runs']}, estimated review time {r['auto']['review_min']} min", "",
         "### Time by area (hours)", "", _table(["Area", "Hours"], _kv(r["time_hours"]["by_area"], "", lambda v: f"{v:.2f}")),
         "### Time by type (hours)", "", _table(["Type", "Hours"], _kv(r["time_hours"]["by_type"], "", lambda v: f"{v:.2f}")),
@@ -194,11 +291,16 @@ def numbers_md(r: dict) -> str:
         "By helper", "", _table(["Helper", "Weighted"], _kv(u["by_helper"])),
         "### Review and gates", "",
         f"- NEEDS CHANGES rounds: {rv['needs_changes_rounds']}; tasks by rounds (0 / 1 / 2+): "
-        f"{rv['tasks_by_rounds']['0']} / {rv['tasks_by_rounds']['1']} / {rv['tasks_by_rounds']['2+']}",
+        f"{rv['tasks_by_rounds']['0']} / {rv['tasks_by_rounds']['1']} / {rv['tasks_by_rounds']['2+']}; "
+        f"abandoned with open findings: {rv['abandoned']}",
         f"- Findings caught by the gates: {rv['caught']}",
         f"- Budget refusals: {r['refusals']['enforced']} enforced, {r['refusals']['would']} would-have (record mode)",
         f"- Unverified tasks (edited, never checked): {len(r['unverified'])}"
         + (f" ({', '.join(r['unverified'])})" if r["unverified"] else ""), "",
+        "First-pass READY by type", "",
+        _table(["Type", "Reviewed", "READY first time", "%"], _fp_rows(rv["first_pass_by_type"])),
+        "First-pass READY by who built (edits before the first review)", "",
+        _table(["Built by", "Reviewed", "READY first time", "%"], _fp_rows(rv["first_pass_by_builder"])),
         "### Waste signals", "",
         f"- Orchestrator doing helper-sized work (main-session edits on tasks that had builders available): "
         f"{len(w['chief_helper_sized_work'])} task(s)"

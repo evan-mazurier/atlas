@@ -109,3 +109,127 @@ def test_cli(ledger, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["tasks_closed"] == 2
     assert (tmp_path / "o" / f"{WEEK}.md").exists()
     assert wr.main(["--week", "garbage"]) == 2
+
+
+# ---- strict first-pass READY
+
+def _strict_ledger(tmp_path, monkeypatch, events):
+    d = tmp_path / "ledger"
+    monkeypatch.setenv("ATLAS_LEDGER2_DIR", str(d))
+    stats.clear_cache()
+    query.invalidate()
+    store.append_events(events, base=d)
+
+
+def _task_events(tid, kinds, verdict=True, base="2026-10-07T09:00:00+02:00", done=60):
+    """kinds: list of (minute, 'b'|'m'|'v'). Builder agent a1 = implementer."""
+    ev = [dict(E("session_start", 0), t=T(0, base)),
+          dict(E("work_type", 0, type="coding", area="atlas", task=tid), t=T(0, base)),
+          dict(E("helper_paired", 1, agent_id="a1", helper="implementer", tuid="u1"), t=T(1, base))]
+    for m, k in kinds:
+        if k == "b":
+            ev.append(dict(E("edit", m, path="x.py", tool="Edit", version=1, task=tid, agent_id="a1"), t=T(m, base)))
+        elif k == "m":
+            ev.append(dict(E("edit", m, path="y.py", tool="Edit", version=2, task=tid), t=T(m, base)))
+        elif k == "v":
+            ev.append(dict(E("verdict", m, agent_id="r1", helper="reviewer", verdict="READY", version=2,
+                             findings=0, task=tid), t=T(m, base)))
+    ev.append(dict(E("task_done", done, task=tid, version=2), t=T(done, "2026-10-07T09:00:00+02:00")))
+    return ev
+
+
+def test_strict_hidden_rework(tmp_path, monkeypatch):
+    _strict_ledger(tmp_path, monkeypatch, _task_events(T1, [(5, "b"), (6, "m"), (10, "v")]))
+    r = wr.compute(WEEK)
+    assert r["review"]["hidden_rework_tasks"] == [T1]
+    assert r["tasks"]["first_pass_ready_pct"] == 100.0
+    assert r["tasks"]["first_pass_ready_strict_pct"] == 0.0
+    assert "hidden rework: 1 task(s) (" + T1 + ")" in wr.numbers_md(r)
+
+
+def test_strict_main_edit_before_builder(tmp_path, monkeypatch):
+    _strict_ledger(tmp_path, monkeypatch, _task_events(T1, [(4, "m"), (5, "b"), (10, "v")]))
+    r = wr.compute(WEEK)
+    assert r["review"]["hidden_rework_tasks"] == []
+    assert r["tasks"]["first_pass_ready_strict_pct"] == 100.0
+
+
+def test_strict_main_edit_after_verdict(tmp_path, monkeypatch):
+    _strict_ledger(tmp_path, monkeypatch, _task_events(T1, [(5, "b"), (10, "v"), (12, "m")]))
+    r = wr.compute(WEEK)
+    assert r["review"]["hidden_rework_tasks"] == []
+    assert r["tasks"]["first_pass_ready_strict_pct"] == 100.0
+
+
+def test_strict_edits_in_previous_week(tmp_path, monkeypatch):
+    # started Mon 5 Oct 2026 (W41) is the week of the close? use started Sat 3 Oct (W40), closed Wed 7 Oct (W41)
+    base = "2026-10-03T09:00:00+02:00"
+    ev = _task_events(T1, [(5, "b"), (6, "m"), (10, "v")], base=base, done=60)
+    ev = [e for e in ev if e["ev"] != "task_done"] + [dict(E("task_done", 60, task=T1, version=2))]
+    _strict_ledger(tmp_path, monkeypatch, ev)
+    r = wr.compute(WEEK)
+    assert r["tasks"]["closed"] == 1
+    assert r["review"]["hidden_rework_tasks"] == [T1]
+    assert r["tasks"]["first_pass_ready_strict_pct"] == 0.0
+
+
+def test_strict_no_verdicts_excluded(tmp_path, monkeypatch):
+    _strict_ledger(tmp_path, monkeypatch, _task_events(T1, [(5, "b"), (6, "m")]))
+    r = wr.compute(WEEK)
+    assert r["review"]["hidden_rework_tasks"] == []
+    assert r["tasks"]["first_pass_ready_strict_pct"] is None
+    assert "strict (no main-session edits on a builder's work before the first verdict): n/a; hidden rework: 0 task(s)" in wr.numbers_md(r)
+
+
+# ---- first-pass READY by type and by who built
+
+def _fp_events(tid, kinds, type_="coding", verdict="READY"):
+    ev = _task_events(tid, kinds)
+    for e in ev:
+        if e["ev"] == "work_type":
+            e["type"] = type_
+        if e["ev"] == "verdict":
+            e["verdict"] = verdict
+    return ev
+
+
+def _rows(r, key):
+    return {x["key"]: (x["ready"], x["reviewed"], x["pct"]) for x in r["review"][key]}
+
+
+def test_fp_by_type(tmp_path, monkeypatch):
+    ids = [f"{SID[:8]}-{i}" for i in range(3, 6)]
+    ev = (_fp_events(ids[0], [(5, "b"), (10, "v")], "coding")
+          + _fp_events(ids[1], [(5, "b"), (10, "v")], "coding")
+          + _fp_events(ids[2], [(5, "m"), (10, "v")], "writing", verdict="NEEDS_CHANGES"))
+    _strict_ledger(tmp_path, monkeypatch, ev)
+    r = wr.compute(WEEK)
+    assert _rows(r, "first_pass_by_type") == {"coding": (2, 2, 100.0), "writing": (0, 1, 0.0)}
+    assert [x["key"] for x in r["review"]["first_pass_by_type"]] == ["coding", "writing"]
+    md = wr.numbers_md(r)
+    assert "\nFirst-pass READY by type\n\n| Type | Reviewed | READY first time | % |" in md
+    assert "| coding | 2 | 2 | 100.0 % |" in md and "| writing | 1 | 0 | 0.0 % |" in md
+
+
+def test_fp_builder_classes_and_late_edit(tmp_path, monkeypatch):
+    i = [f"{SID[:8]}-{n}" for n in range(3, 7)]
+    ev = (_fp_events(i[0], [(5, "m"), (10, "v")])
+          + _fp_events(i[1], [(5, "b"), (10, "v")])
+          + _fp_events(i[2], [(5, "b"), (6, "m"), (10, "v")], verdict="NEEDS_CHANGES")
+          + _fp_events(i[3], [(10, "v"), (12, "m"), (13, "b")]))   # edits only after the verdict
+    _strict_ledger(tmp_path, monkeypatch, ev)
+    r = wr.compute(WEEK)
+    assert _rows(r, "first_pass_by_builder") == {
+        "orchestrator only": (1, 1, 100.0), "helper only": (1, 1, 100.0),
+        "both": (0, 1, 0.0), "no file edits": (1, 1, 100.0)}
+    md = wr.numbers_md(r)
+    assert "First-pass READY by who built (edits before the first review)\n\n| Built by |" in md
+    assert "| both | 1 | 0 | 0.0 % |" in md
+    assert "—" not in md
+
+
+def test_fp_no_verdicts_excluded(tmp_path, monkeypatch):
+    _strict_ledger(tmp_path, monkeypatch, _task_events(T1, [(5, "b"), (6, "m")]))
+    r = wr.compute(WEEK)
+    assert r["review"]["first_pass_by_type"] == [] and r["review"]["first_pass_by_builder"] == []
+    assert wr.numbers_md(r).count("_none_") >= 2

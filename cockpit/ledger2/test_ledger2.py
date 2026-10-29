@@ -21,6 +21,7 @@ def ledger(tmp_path, monkeypatch):
     d = tmp_path / "ledger"
     monkeypatch.setenv("ATLAS_LEDGER2_DIR", str(d))
     monkeypatch.setenv("ATLAS_REPORTS_DIR", str(tmp_path / "reports"))
+    monkeypatch.setattr(stats, "_known_area_ids", lambda: {a["id"] for a in areas.load_areas(str(AREAS_FIXTURE))})
     stats.clear_cache()
     query.invalidate()
     return d
@@ -189,6 +190,13 @@ def test_derive_not_flagged_when_open_or_research_unchanged():
     assert t["status"] == "open" and t["ended"] is None and t["unverified_flag"] is False
     evs = [E("work_type", 1, type="research", task="abcd1234-1"), E("task_done", 2, task="abcd1234-1", version=0)]
     assert derive.derive_v2(evs, wf())[0]["unverified_flag"] is False
+
+
+def test_derive_an_edit_on_a_config_path_counts_like_any_edit():
+    evs = [E("work_type", 1, type="coding", task="abcd1234-1"),
+           E("edit", 2, task="abcd1234-1", path="D:\\repo\\CLAUDE.md", tool="Edit", version=1)]
+    t = derive.derive_v2(evs, wf())[0]
+    assert t["edits"] == 1 and t["checked"] is False
 
 
 def test_derive_switch_carries_spent_budget_as_min():
@@ -391,6 +399,16 @@ def test_auto_runs(ledger):
     assert runs[0]["task_id"] == "ffff0000-1" and runs[0]["status"] == "done" and runs[0]["verdict"] == "READY"
     assert runs[0]["review_min"] == 25 and runs[0]["title"] == "T" and runs[0]["crew"] == []
     assert set(runs[0]) == {"task_id", "sid", "title", "area", "start", "end", "crew", "status", "verdict", "review_min"}
+
+
+def test_time_by_area_merges_removed_areas_into_unassigned(ledger, monkeypatch):
+    seed(ledger, now_stream())
+    monkeypatch.setattr(stats, "_known_area_ids", lambda: {"job"})     # the task's area (atlas) is no longer in areas.yaml
+    p = stats.compute()
+    assert [r["area"] for r in p["time_by_area"]] == ["unassigned"]
+    stats.clear_cache()
+    monkeypatch.setattr(stats, "_known_area_ids", lambda: set())       # areas.yaml unreadable: ids kept as they are
+    assert stats.compute()["time_by_area"][0]["area"] == "atlas"
 
 
 def test_stats_payload_shape_and_values(ledger):
@@ -711,3 +729,133 @@ def test_rounds_hist_refused_bucket_ignores_carry_over_notice(ledger):
     seed(ledger, s)
     h = stats.compute()["rounds_hist"]
     assert h["refused"] == 0 and h["0"] == 1
+
+
+def test_load_areas_keeps_an_archived_area_with_its_flag(tmp_path):
+    f = tmp_path / "areas.yaml"
+    f.write_text(chr(10).join(["areas:", "  - id: a", "    name: A", "    color: '#111111'", "  - id: b",
+                            "    name: B", "    color: '#222222'", "    archived: true", ""]), encoding="utf-8")
+    got = areas.load_areas(str(f))
+    assert [x["id"] for x in got] == ["a", "b"]
+    assert got[1]["archived"] is True and not got[0].get("archived")
+
+
+# ------------------------------------------------------------------ option C: abandon, recall, grant for_task
+
+def _spent_coding(task="abcd1234-1", n=3, start=1):
+    evs = [E("work_type", start, type="coding", task=task)]
+    for i in range(1, n + 1):
+        evs += [E("edit", start + i * 3, task=task, path="a.py", tool="Edit", version=i),
+                E("verdict", start + i * 3 + 1, task=task, agent_id="R%d" % i, helper="reviewer",
+                  verdict="NEEDS_CHANGES", version=i, findings=1)]
+    return evs
+
+
+def test_derive_abandoned_task_keeps_its_rounds_and_the_next_is_fresh():
+    evs = _spent_coding() + [E("task_abandoned", 30, task="abcd1234-1", needs_changes=3, granted=0, paths=["a.py"]),
+                             E("work_type", 30, type="writing", task="abcd1234-2")]
+    t1, t2 = derive.derive_v2(evs, wf())
+    assert t1["status"] == "abandoned" and t1["ended"] == T(30)
+    assert t1["rounds"]["own"] == 3 and t1["rounds"]["needs_changes"] == 3 and t1["rounds"]["carried"] == 0
+    assert t2["status"] == "open" and t2["rounds"] == {"needs_changes": 0, "budget": 2, "granted": 0, "left": 2,
+                                                       "own": 0, "carried": 0}
+
+
+def test_derive_legacy_stream_without_task_abandoned_is_unchanged():
+    evs = _spent_coding() + [E("work_type", 30, type="writing", task="abcd1234-2")]
+    t1, t2 = derive.derive_v2(evs, wf())
+    assert t1["status"] == "switched" and t2["rounds"]["carried"] == 3 and t2["rounds"]["needs_changes"] == 3
+
+
+def test_derive_recall_brings_the_old_rounds_back_to_the_current_task():
+    evs = _spent_coding() + [E("task_abandoned", 30, task="abcd1234-1", needs_changes=3, granted=0, paths=["a.py"]),
+                             E("work_type", 30, type="chore", task="abcd1234-2"),
+                             E("rework_recalled", 31, task="abcd1234-2", from_task="abcd1234-1", nc=3, path="a.py")]
+    t1, t2 = derive.derive_v2(evs, wf())
+    assert t1["status"] == "abandoned"
+    assert t2["rounds"] == {"needs_changes": 3, "budget": 1, "granted": 0, "left": 0, "own": 0, "carried": 3}
+
+
+def test_derive_grant_for_task_counts_on_the_abandoned_task():
+    evs = _spent_coding() + [E("task_abandoned", 30, task="abcd1234-1", needs_changes=3, granted=0, paths=["a.py"]),
+                             E("work_type", 30, type="writing", task="abcd1234-2"),
+                             E("rework_granted", 31, task="abcd1234-2", n=2, for_task="abcd1234-1")]
+    t1, t2 = derive.derive_v2(evs, wf())
+    assert t1["rounds"]["granted"] == 2 and t2["rounds"]["granted"] == 0
+    evs[-1] = E("rework_granted", 31, task="abcd1234-2", n=2, for_task="gone-9")      # unknown id: the current task
+    t1, t2 = derive.derive_v2(evs, wf())
+    assert t1["rounds"]["granted"] == 0 and t2["rounds"]["granted"] == 2
+
+
+def test_rounds_hist_counts_each_task_on_its_own_rounds(ledger):
+    sid, s8 = "abab0000-cccc", "abab0000"
+    now = dt.datetime.now().astimezone().replace(microsecond=0)
+
+    def t(m):
+        return (now - dt.timedelta(minutes=60 - m)).isoformat(timespec="seconds")
+    ev = lambda m, name, **kw: dict({"v": 2, "t": t(m), "ev": name, "sid": sid}, **kw)
+    s = [ev(0, "work_type", type="writing", area="atlas", task=s8 + "-1")]
+    for i in (1, 2, 3):
+        s += [ev(i * 3, "edit", task=s8 + "-1", path="a.md", tool="Edit", version=i),
+              ev(i * 3 + 1, "verdict", task=s8 + "-1", agent_id="R%d" % i, helper="reviewer", verdict="NEEDS_CHANGES",
+                 version=i, findings=1)]
+    s += [ev(20, "task_abandoned", task=s8 + "-1", needs_changes=3, granted=0, paths=["a.md"]),
+          ev(20, "work_type", type="coding", area="atlas", task=s8 + "-2"),
+          ev(21, "edit", task=s8 + "-2", path="b.py", tool="Edit", version=1),
+          ev(22, "verdict", task=s8 + "-2", agent_id="R9", helper="reviewer", verdict="READY", version=1, findings=0),
+          ev(23, "task_done", task=s8 + "-2", version=1)]
+    seed(ledger, s)
+    h = stats.compute()["rounds_hist"]
+    assert h["0"] == 1 and h["2"] == 1 and h["1"] == 0
+
+
+def test_derive_abandoned_task_with_edits_and_no_check_is_flagged_unverified():
+    evs = _spent_coding() + [E("task_abandoned", 30, task="abcd1234-1", needs_changes=3, granted=0, paths=["a.py"]),
+                             E("work_type", 30, type="writing", task="abcd1234-2")]
+    t1, t2 = derive.derive_v2(evs, wf())
+    assert t1["status"] == "abandoned" and t1["unverified_flag"] is True
+
+
+def test_derive_round_field_decides_the_round_and_legacy_verdicts_use_versions():
+    def stream(rounds):
+        evs = [E("work_type", 1, type="coding", task="abcd1234-1")]
+        for i, r in enumerate(rounds):
+            kw = {} if r is None else {"round": r}
+            evs.append(E("verdict", 2 + i, task="abcd1234-1", agent_id="R%d" % i, helper="reviewer",
+                         verdict="NEEDS_CHANGES", version=0, findings=1, **kw))
+        return derive.derive_v2(evs, wf())[0]["rounds"]
+    assert stream([True, False, True])["own"] == 2
+    assert stream([None, None, None])["own"] == 1               # legacy: one round per distinct failing version
+    assert stream([True, False, False])["needs_changes"] == 1
+
+
+def test_derive_abandon_without_paths_then_fresh_task_and_chained_carry():
+    evs = [E("work_type", 1, type="coding", task="abcd1234-1")]
+    for i in range(3):
+        evs.append(E("verdict", 2 + i, task="abcd1234-1", agent_id="R%d" % i, helper="reviewer",
+                     verdict="NEEDS_CHANGES", version=0, findings=1, round=True))
+    evs += [E("task_abandoned", 10, task="abcd1234-1", needs_changes=3, granted=0),
+            E("work_type", 10, type="coding", task="abcd1234-2")]
+    for i in range(3):
+        evs.append(E("verdict", 11 + i, task="abcd1234-2", agent_id="S%d" % i, helper="reviewer",
+                     verdict="NEEDS_CHANGES", version=0, findings=1, round=True))
+    evs.append(E("work_type", 20, type="research", task="abcd1234-3", carried=True))
+    t1, t2, t3 = derive.derive_v2(evs, wf())
+    assert t1["status"] == "abandoned" and t1["rounds"]["needs_changes"] == 3
+    assert t2["status"] == "switched" and t2["rounds"]["carried"] == 0 and t2["rounds"]["own"] == 3
+    assert t3["rounds"]["carried"] == 3 and t3["rounds"]["own"] == 0
+
+
+def test_derive_late_verdicts_count_on_the_open_or_next_task_not_on_their_launch_task():
+    evs = [E("work_type", 1, type="coding", task="abcd1234-1"),
+           E("work_type", 2, type="coding", task="abcd1234-2"),
+           E("verdict", 3, task="abcd1234-1", agent_id="R1", helper="reviewer", verdict="NEEDS_CHANGES", version=0,
+             findings=2, counted_on="abcd1234-2"),
+           E("task_done", 4, task="abcd1234-2", version=0),
+           E("verdict", 5, task="abcd1234-1", agent_id="R2", helper="reviewer", verdict="NEEDS_CHANGES", version=0,
+             findings=1, counted_on="next"),
+           E("work_type", 6, type="coding", task="abcd1234-3")]
+    t1, t2, t3 = derive.derive_v2(evs, wf())
+    assert t1["rounds"]["needs_changes"] == 0 and t1["caught"] == 3
+    assert t2["rounds"]["carried"] == 1 and t2["rounds"]["own"] == 0
+    assert t3["rounds"]["carried"] == 1 and t3["rounds"]["needs_changes"] == 1

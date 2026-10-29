@@ -325,3 +325,17 @@ test("areaVar: a known area gets its token, an unknown or empty id the neutral U
   assert.equal(C.areaVar(areas, null), "var(--ctx-2)");
   assert.equal(C.areaVar(areas, undefined), "var(--ctx-2)");
 });
+
+test("openAreas hides archived areas from pickers, except the one an edited item already has", () => {
+  const areas = [{ id: "a" }, { id: "old", archived: true }, { id: "b", archived: false }];
+  assert.deepEqual(C.openAreas(areas).map((x) => x.id), ["a", "b"]);
+  assert.deepEqual(C.openAreas(areas, "old").map((x) => x.id), ["a", "old", "b"]);
+  assert.deepEqual(C.openAreas(null), []);
+});
+
+test("legendAreas keeps an archived area only while an event still uses it; areaVar still resolves it", () => {
+  const areas = [{ id: "a" }, { id: "old", archived: true }];
+  assert.deepEqual(C.legendAreas(areas, [{ area: "a" }]).map((x) => x.id), ["a"]);
+  assert.deepEqual(C.legendAreas(areas, [{ area: "old" }]).map((x) => x.id), ["a", "old"]);
+  assert.equal(C.areaVar(areas, "old"), "var(--a-old)");
+});

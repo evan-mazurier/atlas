@@ -32,7 +32,10 @@ from ledger2 import areas as areas_mod  # noqa: E402
 from ledger2 import store  # noqa: E402
 
 PRE_MATCHER = ("Agent|Edit|Write|NotebookEdit|Bash|PowerShell|Skill|SubagentHandback|CronCreate|ScheduleWakeup|SendMessage|"
-               "mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__update_scheduled_task|RemoteTrigger")
+               "mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__update_scheduled_task|"
+               "mcp__scheduled-tasks__run_scheduled_task|RemoteTrigger|mcp__ccd_session__start_session|"
+               "mcp__ccd_session__hand_off_to_session|mcp__ccd_session_mgmt__send_message|mcp__ccd_session__spawn_task|"
+               "mcp__ccd_session__move_to_cloud|Workflow")
 POST_MATCHER = "Agent|Edit|Write|NotebookEdit"
 EVENTS = [("PreToolUse", PRE_MATCHER), ("PostToolUse", POST_MATCHER), ("SubagentStart", None),
           ("SubagentStop", None), ("Stop", None), ("SessionStart", None), ("SessionEnd", None),

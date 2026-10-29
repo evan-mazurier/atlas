@@ -2,7 +2,7 @@
    and the drag interactions on them. Looks follow docs/v2/charts-b.html ("Plan · Thursday"). */
 import {
   AXIS_MIN, AXIS_MAX, fromMin, minToFrac, pointToSlot, inside, moveRange, resizeRange,
-  layoutBlocks, areaVar, dayTotals, fmtHours, mineBlocks, allDayEvents, weekDays, dayShort, dowOf, recurText, clamp,
+  layoutBlocks, areaVar, dayTotals, fmtHours, mineBlocks, allDayEvents, weekDays, dayShort, dowOf, recurText, clamp, legendAreas,
 } from "./plan-core.js";
 
 const ROW_H = 44;          // one row of the calendar in the day view
@@ -35,7 +35,7 @@ export function renderTime(P, host) {
     mk("p", "plan-tot mono", "work " + fmtHours(t.work) + "h · sessions " + fmtHours(t.sessions) + "h", ct);
   }
   const lg = mk("div", "lg", null, ch);
-  ctx.kit.legend(lg, ctx.areas.map((a) => ({ name: a.name, color: areaVar(ctx.areas, a.id) })).concat([{ name: "Unassigned", color: "var(--ctx-2)" }]), "sq");
+  ctx.kit.legend(lg, legendAreas(ctx.areas, S.data.events).map((a) => ({ name: a.name, color: areaVar(ctx.areas, a.id) })).concat([{ name: "Unassigned", color: "var(--ctx-2)" }]), "sq");
   const body = mk("div", "cb plan-tl", null, host);
   if (S.view === "day") dayView(P, body); else weekView(P, body);
   const leg = mk("div", "pl-leg", null, host);

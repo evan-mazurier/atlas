@@ -88,7 +88,7 @@ def _new_task(e: dict, wf: dict, prev: dict | None) -> dict:
         "plan_ref": e.get("plan_ref"), "plan_auto": bool(e.get("plan_auto")),
         "auto": False, "started": e.get("t"), "ended": None, "duration_s": 0, "span_s": 0, "status": "open",
         "_times": [], "_hiv": [],
-        "_budget": info["budget"], "_nc": set(), "_esc": False, "_granted": 0,
+        "_budget": info["budget"], "_nc": set(), "_nc_n": 0, "_esc": False, "_granted": 0,
         "_carried": 0, "_nc_at": 0, "_vseq": None, "_version": 0, "_lv": -1, "_other_v": -1, "_edits": 0, "_needs_check": info["needs_check"],
         "helpers": OrderedDict(), "verdicts": [], "_seen_agents": set(), "refusals": [],
         "caught": 0, "summary": None,
@@ -96,10 +96,11 @@ def _new_task(e: dict, wf: dict, prev: dict | None) -> dict:
     }
     if prev is not None and prev["status"] == "switched":
         b = prev["_budget"]
-        total = prev["_carried"] + len(prev["_nc"])
+        total = prev["_carried"] + prev["_nc_n"]
         # resolved = the latest verdict is a READY that covers the latest main-session version (the hook's task_resolved);
         # a task opened by a carry has no verdict yet, so it stays unresolved
-        last_v = prev["verdicts"][-1]["verdict"] if prev["verdicts"] else None
+        real = [x for x in prev["verdicts"] if not x.get("late")]
+        last_v = real[-1]["verdict"] if real else None
         resolved = (last_v == "READY" and max(prev["_lv"], 0) >= prev["_version"]
                     and (prev["_nc_at"] == 0 or (prev["_vseq"] is not None and prev["_vseq"] > prev["_nc_at"])))
         spent = (b is not None and total > 0 and total >= b and not resolved) or prev["_esc"]
@@ -132,12 +133,13 @@ def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
     t["span_s"] = _secs(t["started"], rec_end)
     t["duration_s"] = _active_secs(t["started"], rec_end, t["_times"], t["_hiv"])
     budget = t["_budget"]
-    nc = t["_carried"] + len(t["_nc"])
+    nc = t["_carried"] + t["_nc_n"]
     left = None if budget is None else max(0, budget + t["_granted"] - nc)
     verdicts = t["verdicts"]
-    final = verdicts[-1]["verdict"] if verdicts else None
+    real = [x for x in verdicts if not x.get("late")]
+    final = real[-1]["verdict"] if real else None
     checked = t["_lv"] >= t["_version"] and t["_lv"] >= 0
-    unverified = (t["_needs_check"] and t["status"] in ("done", "switched", "ended")
+    unverified = (t["_needs_check"] and t["status"] in ("done", "switched", "ended", "abandoned")
                   and t["_edits"] > 0 and not checked)
     helpers = [{"helper": h, "count": v["count"], "labels": v["labels"]} for h, v in t["helpers"].items()]
     out = {
@@ -147,7 +149,7 @@ def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
         "started": t["started"], "ended": ended, "duration_s": t["duration_s"], "span_s": t["span_s"], "status": t["status"],
         "crew": list(t["helpers"].keys()), "helpers": helpers,
         "rounds": {"needs_changes": nc, "budget": budget, "granted": t["_granted"], "left": left,
-                   "own": len(t["_nc"]), "carried": t["_carried"]},
+                   "own": t["_nc_n"], "carried": t["_carried"]},
         "verdicts": verdicts, "final_verdict": final, "checked": checked,
         "unverified_flag": bool(unverified), "caught": t["caught"], "edits": t["_edits"],
         "refusals": t["refusals"], "cost": t["cost"], "summary": t["summary"],
@@ -182,6 +184,8 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
     title = None
     auto = False
     agent_helper: dict[str, str] = {}
+    lock: dict | None = None             # the last abandoned task's values, read by legacy rework_recalled / for_task events
+    late_nc, late_esc = 0, False         # late verdicts that arrived with no task open: they count on the next task
     spawn_n = 0                          # helpers launched so far in the session (the hook's spawn_seq)
     seq_of: dict[str, int] = {}          # launch id -> launch order; agent id -> launch order (via helper_paired)
     last_t = None
@@ -198,8 +202,23 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
                 cur["status"], cur["ended"] = "switched", t
                 prev = cur
             nt = _new_task(e, wf, prev)
+            if late_nc or late_esc:
+                nt["_carried"] += late_nc
+                nt["_nc_at"] = spawn_n
+                nt["_esc"] = nt["_esc"] or late_esc
+                late_nc, late_esc = 0, False
             tasks[nt["id"]] = nt
             cur = last = nt
+            continue
+        if ev == "task_abandoned":
+            old = tasks.get(e.get("task"))
+            if old is not None and old["status"] == "open":
+                old["status"], old["ended"] = "abandoned", t
+                lock = {"task": old["id"], "nc": int(e.get("needs_changes") or 0),
+                        "granted": int(e["granted"]) if e.get("granted") is not None else old["_granted"],
+                        "budget": old["_budget"]}
+                if cur is old:
+                    cur = None                  # the next declaration opens fresh (no carry)
             continue
         if ev == "auto":
             auto = auto or (e.get("marker") in markers)
@@ -238,6 +257,11 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
         tid = e.get("task")
         tk = tasks.get(tid) if tid else (last)
         if tk is None:
+            if ev == "verdict" and e.get("counted_on") == "next":       # a late verdict before any task exists
+                if e.get("verdict") == "NEEDS_CHANGES":
+                    late_nc += 1
+                elif e.get("verdict") == "ESCALATE":
+                    late_esc = True
             continue
         if t:
             tk["_times"].append(t)
@@ -270,25 +294,64 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
                 tk["_seen_agents"].add(aid)
             v = e.get("verdict")
             ver = int(e["version"]) if e.get("version") is not None else None
-            tk["verdicts"].append({"t": t, "helper": e.get("helper"), "verdict": v, "version": ver,
-                                   "findings": int(e.get("findings") or 0)})
-            tk["_vseq"] = seq_of.get(aid)
-            if v == "NEEDS_CHANGES":
+            co = e.get("counted_on")
+            is_late = bool(co) and v in ("NEEDS_CHANGES", "ESCALATE")
+            entry = {"t": t, "helper": e.get("helper"), "verdict": v, "version": ver,
+                     "findings": int(e.get("findings") or 0)}
+            if is_late:
+                entry["late"] = True                 # counted on another task; never this task's final verdict
+            tk["verdicts"].append(entry)
+            if not is_late:
+                tk["_vseq"] = seq_of.get(aid)
+            if co and v in ("NEEDS_CHANGES", "ESCALATE"):
+                # a late verdict: it counts on the open task (or the next one), never as an own round of its launch task
+                target = tasks.get(co) if co != "next" else None
+                if target is None:
+                    if v == "NEEDS_CHANGES":
+                        late_nc += 1
+                    else:
+                        late_esc = True
+                elif v == "NEEDS_CHANGES":
+                    target["_carried"] += 1
+                    target["_nc_at"] = spawn_n
+                else:
+                    target["_esc"] = True
+            elif v == "NEEDS_CHANGES":
+                if "round" in e:                # the hook's own decision (contracts §1.2)
+                    tk["_nc_n"] += 1 if e["round"] else 0
+                else:                           # legacy verdict: one round per distinct failing version
+                    key = ver if ver is not None else "?" + str(aid)
+                    if key not in tk["_nc"]:
+                        tk["_nc"].add(key)
+                        tk["_nc_n"] += 1
                 tk["_nc_at"] = spawn_n
             if v == "READY":
                 if ver is not None:            # unknown version never counts as a check
                     tk["_lv"] = max(tk["_lv"], ver)
             elif v == "NEEDS_CHANGES":
-                tk["_nc"].add(ver if ver is not None else "?" + str(aid))
                 tk["caught"] += int(e.get("findings") or 0)
-            elif v == "ESCALATE":
+            elif v == "ESCALATE" and not (co and v in ("NEEDS_CHANGES", "ESCALATE")):
                 tk["_esc"] = True
         elif ev == "check":
             if e.get("ok") and tk["_other_v"] <= tk["_lv"]:
                 tk["_lv"] = max(tk["_lv"], int(e.get("version") or 0))
         elif ev == "rework_granted":
-            tk["_granted"] += int(e.get("n") or 1)
-            tk["_esc"] = False
+            target = tasks.get(e.get("for_task")) if e.get("for_task") else None
+            target = target if target is not None else tk       # for_task: the abandoned task's own round
+            target["_granted"] += int(e.get("n") or 1)
+            if lock is not None and e.get("for_task") and e.get("for_task") == lock["task"]:
+                lock["granted"] += int(e.get("n") or 1)
+            target["_esc"] = False
+        elif ev == "rework_recalled":
+            src = tasks.get(e.get("from_task"))
+            tk["_carried"] += int(e.get("nc") or 0)              # legacy event: the abandoned task's rounds come back
+            tk["_nc_at"] = spawn_n                               # a reviewer launched before the recall cannot resolve it
+            if lock is not None and lock["task"] == e.get("from_task"):
+                tk["_budget"] = _min_budget(tk["_budget"], lock["budget"])
+                tk["_granted"] += lock["granted"]
+            elif src is not None:
+                tk["_budget"] = _min_budget(tk["_budget"], src["_budget"])
+                tk["_granted"] += src["_granted"]
         elif ev == "refusal":
             r = {"guard": e.get("guard"), "would": bool(e.get("would"))}
             if str(e.get("detail") or "").startswith("carry-over"):

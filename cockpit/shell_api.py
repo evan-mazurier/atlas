@@ -60,7 +60,8 @@ def _session_area(areas: list[dict], s: dict) -> str | None:
 
 def areas_payload() -> dict:
     return {"ok": True, "areas": [
-        {"id": a["id"], "name": a.get("name") or a["id"], "color": a.get("color"), "group": a.get("group")}
+        {"id": a["id"], "name": a.get("name") or a["id"], "color": a.get("color"), "group": a.get("group"),
+         "archived": a.get("archived") is True}
         for a in load_areas()]}
 
 

@@ -95,8 +95,9 @@ def git_prefix() -> list[str]:
 
 
 def run_git(cwd: Path, *args: str, timeout: int = GIT_TIMEOUT, input: bytes | None = None) -> subprocess.CompletedProcess:
+    # The cockpit runs windowless (pythonw): without this flag every git call flashes a console window on Windows
     return subprocess.run(git_prefix() + list(args), cwd=str(cwd), capture_output=True, env=git_env(),
-                          timeout=timeout, input=input)
+                          timeout=timeout, input=input, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def has_url_rewrite(clone: Path) -> bool:

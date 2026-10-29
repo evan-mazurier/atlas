@@ -20,6 +20,13 @@ def carried(env):
     return bool(env.events("work_type")[-1].get("carried"))
 
 
+def abandoned(env):
+    """The latest declaration abandoned a spent, unresolved task (a task_abandoned event right before it, no carry)."""
+    evs = env.events()
+    i = max(k for k, e in enumerate(evs) if e["ev"] in ("work_type", "playbook"))
+    return evs[i - 1]["ev"] == "task_abandoned" and not evs[i].get("carried")
+
+
 def spent_chore(env):
     """A chore (budget 1) with one NEEDS CHANGES while the main session made no edit (version 0)."""
     env.bash(": team-type chore")
@@ -38,26 +45,46 @@ def test_needs_changes_then_ready_with_version_zero_is_resolved(env):
     assert not carried(env)
 
 
+def respend_chore(env, name="b.py"):
+    """The fresh chore opened by an abandon goes spent again: one edit, one NEEDS CHANGES (budget 1)."""
+    env.edit(name)
+    env.review("r%d" % (env.n + 1), "B%d" % (env.n + 1), "NEEDS_CHANGES\n- one")
+
+
 @pytest.mark.parametrize("decls", [
-    [": team-type coding task:t_aaaaaaaa", ": team-type coding task:t_bbbbbbbb"],
-    [": team-type writing", ": team-type research"],
-    [": team-type coding task:t_cccccccc", ": team-type writing", ": team-type research task:t_dddddddd"],
+    [": team-type chore task:t_aaaaaaaa", ": team-type coding task:t_bbbbbbbb"],
+    [": team-type chore", ": team-type writing"],
+    [": team-type chore task:t_cccccccc", ": team-type chore", ": team-type research task:t_dddddddd"],
 ])
-def test_spent_without_ready_carries_twice_in_a_row(env, decls):
+def test_first_declaration_abandons_then_the_chain_carries(env, decls):
     spent_chore(env)
-    for d in decls:
+    age(env)
+    env.bash(decls[0])
+    assert abandoned(env), decls[0]
+    S = env.state()
+    assert S["needs_changes"] == 0 and S["chained"] is True
+    respend_chore(env)
+    assert env.state()["needs_changes"] == 1
+    for d in decls[1:]:
+        age(env)
         env.bash(d)
         assert carried(env), d
     assert env.state()["needs_changes"] == 1
 
 
-def test_spent_then_carry_then_ready_starts_the_next_fresh(env):
+def test_spent_then_abandon_then_carry_then_ready_starts_the_next_fresh(env):
     spent_chore(env)
-    env.bash(": team-type coding")
-    assert carried(env) and env.state()["needs_changes"] == 1
-    env.review("r2", "A2", "READY")
+    age(env)
+    env.bash(": team-type chore")
+    assert abandoned(env) and env.state()["needs_changes"] == 0
+    respend_chore(env)
+    age(env)
     env.bash(": team-type writing")
-    assert not carried(env) and env.state()["needs_changes"] == 0
+    assert carried(env) and env.state()["needs_changes"] == 1
+    env.review("r20", "A20", "READY")
+    age(env)
+    env.bash(": team-type writing")
+    assert not carried(env) and env.state()["needs_changes"] == 0 and env.state()["chained"] is True    # no edit: the chain stays
 
 
 def test_main_session_edits_after_ready_make_an_over_budget_task_unresolved_again(env):
@@ -78,7 +105,7 @@ def test_main_session_edits_after_ready_make_an_over_budget_task_unresolved_agai
     assert env.state()["last_verified"] < env.state()["version"]
     age(env)
     env.bash(": team-type writing")
-    assert carried(env)
+    assert abandoned(env)
 
 
 def test_a_later_needs_changes_after_a_ready_is_unresolved(env):
@@ -88,7 +115,7 @@ def test_a_later_needs_changes_after_a_ready_is_unresolved(env):
     env.edit("a.py")
     env.review("r3", "A3", "NEEDS_CHANGES\n- two")
     env.bash(": team-type writing")
-    assert carried(env)
+    assert abandoned(env)
 
 
 def test_reminder_does_not_fire_after_a_resolved_task(env):
@@ -112,6 +139,11 @@ def test_reminder_still_fires_for_a_carried_unresolved_task(env):
     env.review("r1", "A1", "NEEDS_CHANGES\n- one")
     env.edit("a.py")
     env.review("r2", "A2", "NEEDS_CHANGES\n- two")
+    age(env)
+    env.bash(": team-type chore")
+    assert abandoned(env)
+    respend_chore(env, "c.py")
+    respend_chore(env, "d.py")                              # 2 own rounds > budget 1
     age(env)
     env.bash(": team-type chore")
     assert carried(env)
@@ -165,7 +197,7 @@ def test_stale_stop_replayed_after_a_resume_is_not_a_verdict(env):
     env.run("SubagentStop", agent_id="A1", agent_type="reviewer", last_assistant_message="READY")
     assert len(env.events("verdict")) == n
     env.bash(": team-type coding")
-    assert carried(env)
+    assert abandoned(env)
 
 
 def test_sendmessage_to_a_running_reviewer_does_not_clear_the_parallel_escape(env):
@@ -181,7 +213,7 @@ def test_sendmessage_to_a_running_reviewer_does_not_clear_the_parallel_escape(en
     env.run("PreToolUse", tool_name="SubagentHandback", agent_id="P2", agent_type="reviewer",
             tool_input={"message": "READY"})
     env.bash(": team-type coding")
-    assert carried(env)
+    assert abandoned(env)
 
 
 def test_resumed_helper_does_not_steal_a_fresh_launch_pairing(env):
@@ -218,7 +250,7 @@ def test_resume_does_not_resurrect_an_earlier_verdict(env):
     resume(env, "A1")                                       # resumed, but its answer is still NEEDS CHANGES
     assert env.state()["last_verdict"] == "NEEDS_CHANGES"
     env.bash(": team-type coding")
-    assert carried(env)
+    assert abandoned(env)
 
 
 def test_sendmessage_from_a_helper_changes_nothing(env):
@@ -228,7 +260,7 @@ def test_sendmessage_from_a_helper_changes_nothing(env):
     assert env.state()["spawn_seq"] == seq and not env.events("helper_resume")
     answer(env, "A1", "READY")
     env.bash(": team-type coding")
-    assert carried(env)
+    assert abandoned(env)
 
 
 def test_sendmessage_to_an_unknown_id_changes_nothing(env):
@@ -238,7 +270,7 @@ def test_sendmessage_to_an_unknown_id_changes_nothing(env):
     assert env.state()["spawn_seq"] == seq and not env.events("helper_resume")
     answer(env, "A1", "READY")
     env.bash(": team-type coding")
-    assert carried(env)
+    assert abandoned(env)
 
 
 def test_parallel_reviewer_still_cannot_clear_the_failing_one(env):
@@ -252,4 +284,4 @@ def test_parallel_reviewer_still_cannot_clear_the_failing_one(env):
                 tool_input={"message": text})
     assert env.state()["last_verdict"] == "READY"
     env.bash(": team-type coding")
-    assert carried(env)
+    assert abandoned(env)

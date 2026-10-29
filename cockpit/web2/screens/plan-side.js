@@ -1,7 +1,7 @@
 /* Plan screen: the "To schedule" memo rail (right column). A memo is a task from tasks.yaml; it is scheduled
    by dragging it onto the calendar (task/place) or from a session (tools/plan_day.py). */
 import {
-  memoList, memoLen, memoPlannedLabel, isScheduledMemo, fmtEstimate, fmtMemoEst, EDIT_MIN, EDIT_MAX, snap, clamp, fromMin, dayShort, areaVar,
+  memoList, memoLen, memoPlannedLabel, isScheduledMemo, fmtEstimate, fmtMemoEst, EDIT_MIN, EDIT_MAX, snap, clamp, fromMin, dayShort, areaVar, openAreas,
 } from "./plan-core.js";
 import { slotAt, surfaceRect } from "./plan-time.js";
 
@@ -149,7 +149,7 @@ function buildMemoAdd(P, host) {
   });
   let seen = "";
   function sync() {
-    const items = ctx.areas.map((a) => ({ value: a.id, label: a.name }));
+    const items = openAreas(ctx.areas).map((a) => ({ value: a.id, label: a.name }));
     const key = items.map((i) => i.value).join(",");
     if (key !== seen) {
       seen = key;

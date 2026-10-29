@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from test_atlas_hook import HERE, env, trip  # noqa: F401  (env is a fixture)
+from test_atlas_hook import HERE, _age_task, env, trip  # noqa: F401  (env is a fixture)
 
 
 @pytest.mark.parametrize("decls", [
@@ -15,9 +15,15 @@ from test_atlas_hook import HERE, env, trip  # noqa: F401  (env is a fixture)
 def test_chained_redeclarations_cannot_escape_the_budget(env, decls):
     trip(env)
     env.set_mode("enforce")
-    for d in decls:
+    env.bash(decls[0])                                   # the first declaration abandons: one fresh budget, once
+    assert not env.events("work_type")[-1].get("carried") and env.events("task_abandoned")
+    for i in range(3):                                   # the fresh task goes over budget (3 > 2)
+        env.edit("b%d.py" % i)
+        env.review("r%d" % (i + 10), "B%d" % i, "NEEDS_CHANGES\n- one")
+    for d in decls[1:]:                                  # from there on every declaration carries: no second reset
+        _age_task(env)
         env.bash(d)
-    wts = env.events("work_type")[-len(decls):]
+    wts = env.events("work_type")[-len(decls[1:]):]
     assert all(w.get("carried") for w in wts), [w.get("carried") for w in wts]
     out = env.agent("implementer", "b1")
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"

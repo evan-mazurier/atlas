@@ -226,8 +226,16 @@ def task_resolved(S):
 
 
 def nc_count(S):
-    """NEEDS CHANGES rounds: distinct failing versions of this task plus rounds carried over a type switch."""
-    return S.get("carried_nc", 0) + len(S["nc_versions"])
+    """NEEDS CHANGES rounds: this task's own rounds (see `nc_round`) plus rounds carried over (a carry)."""
+    return S.get("carried_nc", 0) + int(S.get("nc_rounds") or 0)
+
+
+def nc_round(S, seq):
+    """Does a NEEDS CHANGES verdict from a reviewer with launch number `seq` count as a new round? Yes when it is the
+    task's first, when the reviewer was launched after the previous failing review arrived (`nc_at`), or when the
+    launch is unknown (the strict side). Reviewers launched together before a failing review arrives count once."""
+    nc_at = S.get("nc_at", 0)
+    return nc_count(S) == 0 or nc_at == 0 or seq is None or seq > nc_at
 
 
 class Ctx:
@@ -546,12 +554,12 @@ def state_path(H):
 
 def fresh_state(sid):
     return {"sid": sid, "task": None, "n": 0, "type": None, "area": None, "open": False, "needs_check": True,
-            "version": 0, "last_verified": 0, "other_v": 0, "edits": 0, "nc_versions": [], "carried_nc": 0,
-            "needs_changes": 0, "tuid_aid": {}, "budget": None, "escalated": False, "granted": 0, "pending": {},
+            "version": 0, "last_verified": 0, "other_v": 0, "edits": 0, "main_edits": 0, "nc_rounds": 0,
+            "carried_nc": 0, "needs_changes": 0, "tuid_aid": {}, "budget": None, "escalated": False, "granted": 0, "pending": {},
             "agents": {}, "captured": [], "ended_ids": [], "sent_back_for": None, "playbook_last": None,
             "task_t": None, "spawns": 0, "reminded": None, "plan_ref": None, "plan_auto": False, "last_verdict": None,
             "last_verdict_seq": None, "nc_at": 0, "spawn_seq": 0, "pub_n": 0, "pub_exp": None,
-            "cfg_exp": None}
+            "cfg_exp": None, "chained": False, "chain_next": False, "late_nc": 0, "late_esc": False}
 
 
 def day_files_desc(H, max_days=30):
@@ -630,20 +638,30 @@ def apply_event(S, e, wf):
     if ev in ("work_type", "playbook"):
         typ = "playbook" if ev == "playbook" else (e.get("type") or "undeclared")
         info = type_info(wf, typ)
+        # the chain survives any declaration until a task is resolved (read BEFORE the old task's values are reset)
+        was_chained = bool(S.get("chained") and not (task_resolved(S) and int(S.get("version") or 0) > 0))   # open or closed
         S["task"] = e.get("task")
         try:
             S["n"] = int(str(e.get("task")).rsplit("-", 1)[1])
         except Exception:  # noqa: BLE001
             S["n"] = S.get("n", 0) + 1
-        S.update(type=typ, area=e.get("area"), open=True, version=0, last_verified=0, other_v=0, edits=0,
+        S.update(type=typ, area=e.get("area"), open=True, version=0, last_verified=0, other_v=0, edits=0, main_edits=0,
                  sent_back_for=None, needs_check=info["needs_check"], task_t=e.get("t"), spawns=0, reminded=None,
                  plan_ref=e.get("plan_ref"), plan_auto=bool(e.get("plan_auto")), last_verdict=None, last_verdict_seq=None)
         if e.get("carried"):
             S["carried_nc"] = nc_count(S)
-            S["nc_versions"] = []
+            S["nc_rounds"] = 0
             S["budget"] = min_budget(S.get("budget"), info["budget"])
+            S["chained"] = True                           # a carry is its own chain link
         else:
-            S.update(nc_versions=[], carried_nc=0, escalated=False, granted=0, budget=info["budget"], nc_at=0)
+            S.update(nc_rounds=0, carried_nc=0, escalated=False, granted=0, budget=info["budget"], nc_at=0,
+                     chained=bool(S.get("chain_next")) or was_chained, chain_next=False)
+        if S.get("late_nc") or S.get("late_esc"):         # late verdicts that arrived with no task open count here
+            S["carried_nc"] = int(S.get("carried_nc") or 0) + int(S.get("late_nc") or 0)
+            S["nc_at"] = S.get("spawn_seq", 0)
+            S["chained"] = True
+            S["escalated"] = bool(S.get("escalated")) or bool(S.get("late_esc"))
+            S["late_nc"], S["late_esc"] = 0, False
         if ev == "playbook":
             S["playbook_last"] = {"cmd": e.get("cmd"), "t": e.get("t")}
     elif ev == "task_done":
@@ -653,25 +671,44 @@ def apply_event(S, e, wf):
         if e.get("task") == S.get("task"):
             S["version"] = int(e.get("version") or S["version"] + 1)
             S["edits"] += 1
+            if not e.get("agent_id"):
+                S["main_edits"] = int(S.get("main_edits") or 0) + 1
             if os.path.basename(str(e.get("path") or "")).lower() not in CHECK_FILES:
                 S["other_v"] = S["version"]
+    elif ev == "task_abandoned":
+        if e.get("task") == S.get("task"):
+            S["chain_next"] = True                      # any abandon chains the task opened next
     elif ev == "verdict":
         if e.get("agent_id") and e["agent_id"] not in S["captured"]:
             S["captured"].append(e["agent_id"])
-        if e.get("task") == S.get("task"):
+        if e.get("counted_on"):
+            # a LATE verdict (its reviewer was launched for another task): it counts on the open task, or on the next one
+            if e.get("verdict") in ("NEEDS_CHANGES", "ESCALATE"):
+                if e["counted_on"] == "next" or not S.get("open"):
+                    if e["verdict"] == "NEEDS_CHANGES":
+                        S["late_nc"] = int(S.get("late_nc") or 0) + 1
+                    else:
+                        S["late_esc"] = True
+                else:
+                    if e["verdict"] == "NEEDS_CHANGES":
+                        S["carried_nc"] = int(S.get("carried_nc") or 0) + 1
+                        S["nc_at"] = S.get("spawn_seq", 0)
+                        S["chained"] = True
+                    else:
+                        S["escalated"] = True
+        elif e.get("task") == S.get("task"):
             v, ver = e.get("verdict"), e.get("version")
             key = e.get("agent_id")
             who = (S["agents"].get(key) or S["agents"].get(S["tuid_aid"].get(key)) or S["pending"].get(key) or {})
             S["last_verdict"], S["last_verdict_seq"] = v, who.get("seq")
             if v == "NEEDS_CHANGES":
+                rnd = e["round"] if "round" in e else nc_round(S, who.get("seq"))
+                if rnd:
+                    S["nc_rounds"] = int(S.get("nc_rounds") or 0) + 1
                 S["nc_at"] = S.get("spawn_seq", 0)
             if v == "READY":
                 if ver is not None:      # unknown version never satisfies the done-lock
                     S["last_verified"] = max(S["last_verified"], int(ver))
-            elif v == "NEEDS_CHANGES":
-                key = int(ver) if ver is not None else "?" + str(e.get("agent_id"))
-                if key not in S["nc_versions"]:
-                    S["nc_versions"].append(key)
             elif v == "ESCALATE":
                 S["escalated"] = True
     elif ev == "check":
@@ -796,8 +833,16 @@ GRANT_PROMPT_RE = re.compile(r"^\s*/grant-rework\b(?:\s+(\d{1,2}))?")
 ACK_PROMPT_RE = re.compile(r"^\s*/ack-break(?:\s+([A-Za-z0-9_.:-]{1,80}))?\s*$")
 USER_ONLY_RE = re.compile(r"^\s*/(?:ack-break|grant-rework|allow-publish|allow-config)(?![\w-])", re.I)
 FORWARD_TOOLS = ("CronCreate", "ScheduleWakeup", "SendMessage", "RemoteTrigger",
-                 "mcp__scheduled-tasks__create_scheduled_task", "mcp__scheduled-tasks__update_scheduled_task")
-FORWARD_KEYS = ("prompt", "message", "content", "text", "body", "summary")
+                 "mcp__scheduled-tasks__create_scheduled_task", "mcp__scheduled-tasks__update_scheduled_task",
+                 "mcp__scheduled-tasks__run_scheduled_task", "mcp__ccd_session__start_session",
+                 "mcp__ccd_session__hand_off_to_session", "mcp__ccd_session_mgmt__send_message",
+                 "mcp__ccd_session__spawn_task", "mcp__ccd_session__move_to_cloud", "Workflow")
+# Tools that start, drive or message ANOTHER session: refused for the main session while the task is tripped.
+SESSION_TOOLS = ("mcp__scheduled-tasks__create_scheduled_task", "mcp__scheduled-tasks__update_scheduled_task",
+                 "mcp__scheduled-tasks__run_scheduled_task", "RemoteTrigger", "mcp__ccd_session__start_session",
+                 "mcp__ccd_session__hand_off_to_session", "mcp__ccd_session_mgmt__send_message",
+                 "mcp__ccd_session__spawn_task", "mcp__ccd_session__move_to_cloud", "Workflow")
+FORWARD_KEYS = ("prompt", "message", "content", "text", "body", "summary", "remaining_plan", "background")
 SLASH_RE = re.compile(r"^/([A-Za-z0-9:_-]{1,60})")
 
 
@@ -1224,12 +1269,17 @@ def auto_plan_ref(H, area):
 def open_task(H, tx, kind, typ, area_arg=None, cmd=None, implicit=False, plan_ref=None, auto_ref=None):
     S = tx.state
     carried = False
-    if S["open"]:
-        b = S.get("budget")
-        # Carries only when escalated, or when the rework budget is spent and the task is not resolved (its latest
-        # verdict is not a READY covering the latest version). Under budget every declaration starts fresh.
-        if (b is not None and nc_count(S) > 0 and nc_count(S) >= b and not task_resolved(S)) or S.get("escalated"):
+    if S["open"] and nc_count(S) > 0 and not task_resolved(S):
+        # An open failing review (NEEDS CHANGES with no passing review since). The new declaration carries the count
+        # when the task is escalated or chained (one fresh budget per chain); otherwise the old task is recorded as
+        # abandoned and the new one opens fresh, chained only when the old one was spent.
+        if S.get("escalated") or S.get("chained"):
             carried = True
+        else:
+            tx.emit({"ev": "task_abandoned", "task": S["task"], "needs_changes": nc_count(S),
+                     "granted": S.get("granted", 0)})
+    elif S["open"] and S.get("escalated"):
+        carried = True
     tid = "%s-%d" % (H.sid[:8], S["n"] + 1)
     e = {"ev": kind, "task": tid, "area": H.area_for(area_arg, cmd if kind == "playbook" else None)}
     if kind == "playbook":
@@ -1249,7 +1299,7 @@ def open_task(H, tx, kind, typ, area_arg=None, cmd=None, implicit=False, plan_re
     if carried:
         # not a denial in either mode: logged as would:true so the "enforced" count stays honest
         tx.emit({"ev": "refusal", "task": tid, "guard": "rework", "would": True,
-                 "detail": "carry-over, not a denial: budget carried over a type switch (%d NEEDS CHANGES)"
+                 "detail": "carry-over, not a denial: budget carried over a new declaration (%d NEEDS CHANGES)"
                            % nc_count(S)})
 
 
@@ -3201,11 +3251,17 @@ def h_pre_bash(H):
                 return None
             ok = ((not S["needs_check"] and S["edits"] == 0) or S["version"] == 0
                   or S["last_verified"] >= S["version"])
+            reason = None
             if not ok:
                 reason = ("Not closed: version %d has no passing review (last READY at version %d). "
                           "Run the reviewer on the final version, then close."
                           % (S["version"], S["last_verified"]))
-                out = refuse(H, tx, "done_lock", reason)
+            elif (nc_count(S) > 0 and not task_resolved(S)) or S.get("escalated"):
+                reason = ("Not closed: the last review of this task did not pass. Run a fresh reviewer on the fixed "
+                          "work, or declare the next piece of work (this task is then recorded as abandoned with "
+                          "open findings).")
+            if reason:
+                out = refuse(H, tx, "done_lock", reason)          # one refusal per close, whichever check failed first
                 if out is not None:
                     return out
             tx.emit({"ev": "task_done", "task": S["task"], "version": S["version"]})
@@ -3254,17 +3310,34 @@ def h_pre_forward(H):
             tx.emit({"ev": "ignored", "what": ("forged user-only command via " + H.tool)[:60]})
         return deny("/ack-break, /grant-rework, /allow-publish and /allow-config are typed by the operator only; "
                     "this scheduled prompt or message was refused.")
-    if H.tool == "SendMessage" and not H.agent_id:
-        try:
-            to = H.ti.get("to")
-            if isinstance(to, str) and to:
-                with Txn(H) as tx:
-                    # only a helper whose previous run has ENDED can be resumed; a running one keeps its seq
-                    if to in tx.state["agents"] and to in tx.state["ended_ids"]:
-                        tx.emit({"ev": "helper_resume", "task": tx.state["task"], "agent_id": to,
-                                 "helper": tx.state["agents"][to].get("helper")})
-        except Exception:  # noqa: BLE001
-            log_error()
+    if H.agent_id:
+        return None
+    to = H.ti.get("to") if H.tool == "SendMessage" and isinstance(H.ti, dict) else None
+    durable = H.tool == "CronCreate" and isinstance(H.ti, dict) and bool(H.ti.get("durable"))
+    if H.tool in SESSION_TOOLS or H.tool == "SendMessage" or durable:
+        with Txn(H) as tx:
+            S = tx.state
+            own = isinstance(to, str) and to in S["agents"]
+            if tripped(S):
+                msg = None
+                if H.tool in SESSION_TOOLS or durable or not own:
+                    # another session would carry on the work under a fresh budget
+                    msg = ("Rework budget spent for this %s task (%d NEEDS CHANGES, budget %s). Starting or "
+                           "messaging another session is refused too: bring the operator the blockers; only the operator can "
+                           "grant another round with /grant-rework." % (S["type"], nc_count(S), S["budget"]))
+                elif str(S["agents"][to].get("helper") or "").lower() in H.builders:
+                    msg = rework_msg(S)             # resuming an own builder is spawning one
+                if msg:
+                    out = refuse(H, tx, "rework", msg, tool=H.tool)
+                    if out is not None:
+                        return out                  # record mode falls through: the resume happens, so it is recorded
+            try:
+                # only a helper whose previous run has ENDED can be resumed; a running one keeps its seq
+                if own and to in S["ended_ids"]:
+                    tx.emit({"ev": "helper_resume", "task": S["task"], "agent_id": to,
+                             "helper": S["agents"][to].get("helper")})
+            except Exception:  # noqa: BLE001
+                log_error()
     return None
 
 
@@ -3318,6 +3391,16 @@ def h_pre_agent(H):
     why = None
     with Txn(H) as tx:
         S = tx.state
+        if not H.agent_id and not (S["open"] and S["type"] != "undeclared"):
+            # 6.6a: the main session launches a helper only inside a declared piece of work (type or playbook)
+            out = refuse(H, tx, "declare",
+                         "Declare the work before launching a helper: run `: team-type <type> [area]` on its own "
+                         "(coding, research, writing, legal, chore, quick-question; add the area when the folder is "
+                         "not the topic's), then launch the helper again.",
+                         helper=helper, label=str(H.ti.get("description") or "")[:60],
+                         tuid=H.d.get("tool_use_id"))
+            if out is not None:
+                return out
         if S["open"] and S["type"] == "quick-question" and helper != "scout":
             out = refuse(H, tx, "quick_question",
                          "A quick question can't change files: declare a type with a checker first "
@@ -3353,6 +3436,12 @@ def edit_path(H):
     return H.ti.get("file_path") or H.ti.get("notebook_path") or H.ti.get("path") or ""
 
 
+def rework_msg(S):
+    return ("Rework budget spent for this %s task (%d NEEDS CHANGES, budget %s). Stop and bring "
+            "the operator the blockers; only the operator can grant another round with /grant-rework."
+            % (S["type"], nc_count(S), S["budget"]))
+
+
 def h_pre_edit(H):
     path = edit_path(H)
     if not path:
@@ -3377,10 +3466,7 @@ def h_pre_edit(H):
                           "A quick question can't change files: declare a type with a checker first "
                           "(: team-type coding|writing|chore ...).")
         if not H.agent_id and tripped(S):
-            return refuse(H, tx, "rework",
-                          "Rework budget spent for this %s task (%d NEEDS CHANGES, budget %s). Stop and bring "
-                          "the operator the blockers; only the operator can grant another round with /grant-rework."
-                          % (S["type"], nc_count(S), S["budget"]))
+            return refuse(H, tx, "rework", rework_msg(S))
     return None
 
 
@@ -3427,6 +3513,34 @@ def refresh_json_copies(H, path):
         pass
 
 
+def _ordinal(n):
+    return "%d%s" % (n, "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th"))
+
+
+def edit_nudge(H, S):
+    """3-edit rule reminder text for the main session's every 3rd edit on a task, or None. Reminder only; fails open."""
+    try:
+        if H.agent_id:
+            return None
+        n = int(S.get("main_edits") or 0)
+        if n < 3 or n % 3:
+            return None
+        typ = S.get("type")
+        if typ != "undeclared":            # its real type is unknown: always reminded
+            t = (H.wf.get("types") or {}).get(typ)
+            if typ == "playbook":          # the playbook's own crew; S["playbook_last"] is set by every playbook open
+                pb = (S.get("playbook_last") or {}).get("cmd")
+                spec = (H.wf.get("playbook_crews") or {}).get(pb) if pb else None
+                t = spec if isinstance(spec, dict) else None
+            crew = t.get("crew") if isinstance(t, dict) else None
+            if isinstance(crew, list) and not ({str(x).lower() for x in crew} & set(H.builders)):
+                return None
+        return ("3-edit rule: this is the main session's %s edit on this task. Brief implementer (code) or drafter "
+                "(text) with the rest, unless the change is tiny or a hard case." % _ordinal(n))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def h_post_edit(H):
     path = edit_path(H)
     if not path:
@@ -3434,14 +3548,18 @@ def h_post_edit(H):
     refresh_json_copies(H, path)
     base = os.path.basename(path).lower()
     check = run_check(path) if base in CHECK_FILES else None
+    # A config path is no longer exempt (2026-10-19): PostToolUse only fires when the config gate allowed the edit,
+    # and an allowed config edit is an ordinary `edit` (version bump, needs a check).
     try:
         is_cfg = H.is_config(path)
     except Exception:  # noqa: BLE001
         is_cfg = True
-    exempt = H.is_protected(path) or is_cfg or H.is_exempt(path)      # a config change is gated, not an `edit`
+    # a config path is never exempt, even under ~/.claude, atlas-data or temp; the protected folders stay exempt
+    exempt = H.is_protected(path) or (H.is_exempt(path) and not is_cfg)
     if exempt and check is None:
         return None
     out = None
+    nudge = None
     with Txn(H) as tx:
         S = tx.state
         if not exempt:
@@ -3449,6 +3567,7 @@ def h_post_edit(H):
                 open_task(H, tx, "work_type", "undeclared", implicit=True)
             tx.emit({"ev": "edit", "task": S["task"], "path": path, "tool": H.tool,
                      "version": S["version"] + 1})
+            nudge = edit_nudge(H, S)
         if check is not None and S["task"]:
             ok, problems = check
             tx.emit({"ev": "check", "task": S["task"], "file": path, "ok": ok, "problems": problems,
@@ -3457,6 +3576,15 @@ def h_post_edit(H):
                 out = {"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                               "additionalContext": "Check failed for %s: %s"
                                               % (base, "; ".join(problems)[:900])}}
+    if nudge:
+        try:
+            if out:
+                ctx = out["hookSpecificOutput"]
+                ctx["additionalContext"] = ctx["additionalContext"] + " " + nudge
+            else:
+                out = {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": nudge}}
+        except Exception:  # noqa: BLE001
+            pass
     return out
 
 
@@ -3499,8 +3627,14 @@ def capture_verdict(H, tx, aid, helper, text, tuid=None):
         info = {"version": p["version"], "task": p.get("task")}
     ver = info.get("version") if info else None
     task = (info or {}).get("task") or S["task"]
-    tx.emit({"ev": "verdict", "task": task, "agent_id": key, "helper": helper, "verdict": verdict,
-             "version": ver, "findings": findings})
+    ev = {"ev": "verdict", "task": task, "agent_id": key, "helper": helper, "verdict": verdict,
+          "version": ver, "findings": findings}
+    if verdict in ("NEEDS_CHANGES", "ESCALATE") and (task != S["task"] or not S["open"]):
+        ev["counted_on"] = S["task"] if S["open"] else "next"      # a late verdict always counts (contracts §1.2)
+    elif verdict == "NEEDS_CHANGES":
+        who = S["agents"].get(key) or S["agents"].get(S["tuid_aid"].get(key)) or S["pending"].get(key) or {}
+        ev["round"] = bool(nc_round(S, who.get("seq")))       # decided here, recorded for derive (contracts §1.2)
+    tx.emit(ev)
 
 
 def h_pre_handback(H):

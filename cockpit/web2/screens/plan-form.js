@@ -1,7 +1,7 @@
 /* Plan screen: the event form (edit) and the "this one / the series" chooser.
    Built from kit/ui controls; the values live in `S.form`, so a poll repaint never touches an open form. */
 import {
-  buildRecur, EDIT_MIN, EDIT_MAX, SNAP, fromMin, toMin, dayNum, dayFromNum, dayShort, clamp, allDayTitleOn,
+  buildRecur, EDIT_MIN, EDIT_MAX, SNAP, fromMin, toMin, dayNum, dayFromNum, dayShort, clamp, allDayTitleOn, openAreas,
 } from "./plan-core.js";
 
 function mk(tag, cls, text, parent) {
@@ -107,7 +107,7 @@ export function openEventForm(P, o) {
 
   const titleF = ui.field(row("Title"), { label: "", value: f.title, onInput: (v) => { f.title = v; sync(); }, placeholder: "What happens" });
   const areaDD = ui.dropdown(row("Area"), {
-    items: [{ value: "", label: "No area" }].concat(ctx.areas.map((a) => ({ value: a.id, label: a.name }))),
+    items: [{ value: "", label: "No area" }].concat(openAreas(ctx.areas, f.area).map((a) => ({ value: a.id, label: a.name }))),
     value: f.area,
     onChange: (v) => { f.area = v; },
   });

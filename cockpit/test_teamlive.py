@@ -539,29 +539,50 @@ def test_team_done_without_opener_or_from_a_helper_is_ignored():
     assert (s["done"], s["waiting"]) == (False, True)
 
 
-def test_a_new_prompt_after_team_done_makes_the_session_not_done():
+def test_a_new_prompt_after_team_done_stays_done():
     evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
            prompt("12:08:00"), ev("12:10:00", "Stop")]
     s = lane(build(evs))
-    assert (s["done"], s["waiting"]) == (False, True)
-    s = lane(build(evs[:5]))                                   # the new prompt is still being worked on
-    assert (s["status"], s["done"], s["waiting"]) == ("working", False, False)
+    assert (s["done"], s["waiting"]) == (True, False)
+    s = lane(build(evs[:5]))                                   # the follow-up is still being answered
+    assert (s["status"], s["done"], s["waiting"]) == ("working", True, False)
 
 
-def test_a_second_team_done_after_the_new_prompt_is_done_again():
+def test_a_helper_launch_after_team_done_makes_it_not_done():
     evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
-           prompt("12:08:00"), ev("12:09:00", "TeamDone"), ev("12:10:00", "Stop")]
+           prompt("12:08:00"), ev("12:08:30", "PreToolUse", tool="Agent", tuid="t9"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["done"], s["waiting"]) == (False, True)
+
+
+def test_a_skill_call_after_team_done_makes_it_not_done():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
+           prompt("12:08:00"), ev("12:08:30", "PreToolUse", tool="Skill", cmd="x"), ev("12:10:00", "Stop")]
+    s = lane(build(evs))
+    assert (s["done"], s["waiting"]) == (False, True)
+
+
+def test_a_second_team_done_after_new_work_is_done_again():
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), ev("12:06:00", "Stop"),
+           prompt("12:08:00"), ev("12:08:30", "PreToolUse", tool="Agent", tuid="t9"), ev("12:09:00", "TeamDone"),
+           ev("12:10:00", "Stop")]
     s = lane(build(evs))
     assert (s["done"], s["waiting"]) == (True, False)
 
 
-def test_a_helper_prompt_or_a_helper_team_done_does_not_change_done():
+def test_a_helper_prompt_launch_or_team_done_does_not_change_done():
     evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"),
-           ev("12:06:00", "UserPromptSubmit", in_agent="a1", agent_id="a1"), ev("12:10:00", "Stop")]
+           ev("12:06:00", "UserPromptSubmit", in_agent="a1", agent_id="a1"),
+           ev("12:07:00", "PreToolUse", tool="Agent", tuid="t8", in_agent="a1"),
+           ev("12:07:30", "PreToolUse", tool="Skill", in_agent="a1"), ev("12:10:00", "Stop")]
     assert lane(build(evs))["done"] is True
-    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"), prompt("12:06:00"),
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"),
+           ev("12:06:00", "PreToolUse", tool="Agent", tuid="t9"),
            ev("12:07:00", "TeamDone", in_agent="a1"), ev("12:10:00", "Stop")]
-    assert lane(build(evs))["done"] is False
+    assert lane(build(evs))["done"] is False                   # a helper's TeamDone does not re-close it
+    evs = [prompt("12:00:00"), ev("12:00:05", "WorkType", type="coding"), ev("12:05:00", "TeamDone"),
+           ev("12:07:00", "PostToolUse", tool="Agent", tuid="t9"), ev("12:10:00", "Stop")]
+    assert lane(build(evs))["done"] is True                    # a background helper returning is not new work
 
 
 def test_done_keeps_status_working():

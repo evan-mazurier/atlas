@@ -19,7 +19,10 @@ if (-not $py) { throw "py.exe (the Python launcher) not found on PATH; install P
 & $py -3.12 --version | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "$py -3.12 failed: Python 3.12 is not available through the launcher." }
 
-$action = New-ScheduledTaskAction -Execute $py -Argument "-3.12 `"$script`"" -WorkingDirectory $repo
+# Run through pyw.exe (the windowless launcher beside py.exe) so the daily run never flashes a console window
+$pyw = Join-Path (Split-Path $py) 'pyw.exe'
+if (-not (Test-Path $pyw)) { $pyw = $py }
+$action = New-ScheduledTaskAction -Execute $pyw -Argument "-3.12 `"$script`"" -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -Daily -At '21:00'
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -32,4 +35,4 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force `
     -Description 'Atlas ledger outside anchor: appends the day-file last-line hashes to the public anchor repo and pushes.' | Out-Null
 
-Write-Host "[AtlasLedgerAnchor] registered (daily 21:00, current user, only when logged on), interpreter $py."
+Write-Host "[AtlasLedgerAnchor] registered (daily 21:00, current user, only when logged on), interpreter $pyw."

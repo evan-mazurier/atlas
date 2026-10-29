@@ -16,7 +16,7 @@ let onKey = null;
 const TIER_NAMES = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" };
 const TYPES = [["", "All types"], ["coding", "Coding"], ["research", "Research"], ["writing", "Writing"], ["chore", "Chore"],
   ["legal", "Legal or money"], ["quick-question", "Quick question"], ["playbook", "Playbook"], ["undeclared", "Undeclared"]];
-const STATUSES = [["", "All statuses"], ["open", "In progress"], ["done", "Closed"], ["switched", "Next task started"], ["ended", "Session ended"]];
+const STATUSES = [["", "All statuses"], ["open", "In progress"], ["done", "Closed"], ["switched", "Next task started"], ["abandoned", "Abandoned"], ["ended", "Session ended"]];
 const KPIS = [
   { key: "tasks_closed", label: "Tasks closed", fmt: (v) => String(v), good: "up", unit: "" },
   { key: "first_pass_ready_pct", label: "First-pass READY", fmt: (v) => v + " %", good: "up", unit: "pts" },

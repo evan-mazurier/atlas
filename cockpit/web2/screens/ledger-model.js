@@ -19,7 +19,7 @@ export function taskCellParts(t) {
 }
 
 /** Plain words for a task status. */
-const STATUS_WORDS = { open: "in progress", done: "closed", ended: "session ended", switched: "next task started" };
+const STATUS_WORDS = { open: "in progress", done: "closed", ended: "session ended", switched: "next task started", abandoned: "abandoned with open findings" };
 export function statusWord(s) { return STATUS_WORDS[s] || s || "in progress"; }
 
 /** Rework rounds of a task: {main, sub}. main = "{own} of {budget}" (+ " +N granted"), sub = "{n} carried over" or "".
@@ -35,7 +35,7 @@ export function roundsParts(r) {
 
 /** The Verdict column: [glyph, tone, label]. A refusal shows only when refusals exist and the task is not READY. */
 export function verdictParts(t) {
-  const real = (t.refusals || []).filter((x) => x.would === false && !x.notice);
+  const real = (t.refusals || []).filter((x) => x.would === false && !x.notice && x.guard !== "declare");   // a declare refusal never relabels a task
   const refused = real.find((x) => x.guard === "rework") || real[0];
   const why = { rework: "over budget", publish: "publish not allowed", config: "config change not allowed" };
   if (refused && t.final_verdict !== "READY") {

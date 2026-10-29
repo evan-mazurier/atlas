@@ -121,7 +121,7 @@ def test_an_ordinary_edit_is_not_gated(env):
     assert not refusals(env)
 
 
-def test_a_grant_allows_the_edit_and_logs_it_without_an_edit_event_or_a_version_bump(env):
+def test_a_grant_allows_the_edit_and_it_counts_as_an_edit(env):
     env.set_mode("enforce")
     env.bash(": team-type coding")
     grant(env)
@@ -135,9 +135,91 @@ def test_a_grant_allows_the_edit_and_logs_it_without_an_edit_event_or_a_version_
     assert post is None
     ok = env.events("config_allowed")
     assert len(ok) == 2 and ok[0]["path"].endswith("CLAUDE.md") and ok[0]["tool"] == "Edit"
-    assert not env.events("edit")
-    assert env.state()["version"] == 0
-    assert env.run("Stop", stop_hook_active=False) is None   # nothing unchecked
+    edits = env.events("edit")
+    assert len(edits) == 1 and edits[0]["path"].endswith("CLAUDE.md") and edits[0]["version"] == 1
+    assert env.state()["version"] == 1
+
+
+def test_an_allowed_edit_under_the_user_claude_folder_counts_but_memory_does_not(env):
+    env.set_mode("enforce")
+    env.bash(": team-type coding")
+    grant(env)
+    for name in ("CLAUDE.md", "settings.json", "skills/x/notes.txt", "agents/a.md"):
+        p = HOME / ".claude" / name
+        assert edit_cfg(env, p) is None
+        env.run("PostToolUse", tool_name="Edit", tool_input={"file_path": str(p)})
+    assert len(env.events("edit")) == 4 and env.state()["version"] == 4
+    mem = HOME / ".claude" / "projects" / "x" / "memory" / "note.md"
+    assert edit_cfg(env, mem) is None
+    env.run("PostToolUse", tool_name="Edit", tool_input={"file_path": str(mem)})
+    assert len(env.events("edit")) == 4 and env.state()["version"] == 4
+
+
+def test_an_allowed_config_edit_under_the_temp_dir_counts_with_exempt_temp_on(env):
+    import tempfile
+    env.cfg["exempt_temp"] = True
+    env.set_mode("enforce")
+    env.bash(": team-type coding")
+    grant(env)
+    p = Path(tempfile.gettempdir()) / "w" / "CLAUDE.md"
+    assert edit_cfg(env, p) is None
+    env.run("PostToolUse", tool_name="Edit", tool_input={"file_path": str(p)})
+    assert len(env.events("edit")) == 1 and env.state()["version"] == 1
+    other = Path(tempfile.gettempdir()) / "w" / "notes.py"       # exempt_temp is really on: ordinary temp files stay exempt
+    env.run("PostToolUse", tool_name="Edit", tool_input={"file_path": str(other)})
+    assert len(env.events("edit")) == 1
+
+
+def test_post_edit_fails_closed_when_is_config_raises(monkeypatch, tmp_path):
+    emitted = []
+
+    class FakeTxn:
+        def __init__(self, H):
+            self.state = {"open": True, "task": "t-1", "version": 0}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def emit(self, e):
+            emitted.append(e)
+
+    def boom(self, path):
+        raise RuntimeError("is_config broke")
+
+    class H:
+        tool = "Edit"
+        cfg = {"exempt_temp": True}
+        ledger = str(tmp_path / "ledger")
+        is_config = boom
+        is_protected = staticmethod(lambda p: False)
+        is_exempt = staticmethod(lambda p: True)               # would be exempt, but is_config failing means not exempt
+
+    monkeypatch.setattr(atlas_hook, "Txn", FakeTxn)
+    monkeypatch.setattr(atlas_hook, "edit_path", lambda H: str(tmp_path / "x.txt"))
+    monkeypatch.setattr(atlas_hook, "refresh_json_copies", lambda H, p: None)
+    h = H()
+    assert atlas_hook.h_post_edit(h) is None
+    assert [e["ev"] for e in emitted] == ["edit"] and emitted[0]["version"] == 1
+
+
+def test_an_allowed_config_edit_needs_a_check_stop_and_done_lock(env):
+    env.set_mode("enforce")
+    env.bash(": team-type coding")
+    grant(env)
+    p = env.work / "CLAUDE.md"
+    assert edit_cfg(env, p) is None
+    assert env.run("PostToolUse", tool_name="Edit", tool_input={"file_path": str(p)}) is None
+    out = env.run("Stop", stop_hook_active=False)
+    assert out["decision"] == "block"
+    assert out["reason"].startswith("Unchecked changes (version 1, last check at 0).")
+    done = env.bash(": team-done")
+    assert done["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert not env.events("task_done")
+    env.review("r1", "A1", "READY")
+    assert env.bash(": team-done") is None
 
 
 def test_a_grant_does_not_open_other_gates(env):

@@ -114,6 +114,7 @@ class Ctx:
         self.sched, self.tdoc, self.st, self.base = sched, tdoc, st, base
         self.current, self.runs, self.areas = current, runs, areas
         self.area_ids = {a["id"] for a in areas}
+        self.archived_ids = {a["id"] for a in areas if a.get("archived") is True}
         self.touched: dict = {}
         self.removed: list = []
         self.dirty_sched: set = set()
@@ -336,7 +337,7 @@ def _event_guard(ctx: Ctx, ev: dict, old: dict | None, verb: str = "save") -> No
         raise PlanError(400, f"can't {verb} {name!r}: {reason}")
 
 
-def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str) -> dict:
+def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str, allow_archived: bool = False) -> dict:
     out = dict(stored) if stored else {"id": eid}
     touches_time = False
     for k, v in req.items():
@@ -363,6 +364,8 @@ def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str) -> dict:
         elif k == "area":
             if str(v) not in ctx.area_ids:
                 raise PlanError(400, f"unknown area: {v!r}")
+            if str(v) in ctx.archived_ids and not allow_archived and (stored or {}).get("area") != str(v):
+                raise PlanError(400, f"area archived: {v}")
             out[k] = str(v)
         elif k == "attention":
             if v not in model.ATTENTIONS:
@@ -708,6 +711,8 @@ def _merge_task(ctx: Ctx, stored: dict | None, req: dict, tid: str) -> dict:
         if k == "area":
             if str(v) not in ctx.area_ids:
                 raise PlanError(400, f"unknown area: {v!r}")
+            if str(v) in ctx.archived_ids and (stored or {}).get("area") != str(v):
+                raise PlanError(400, f"area archived: {v}")
             out[k] = str(v)
         elif k == "title":
             out[k] = str(v).strip()
@@ -866,7 +871,7 @@ def h_task_place(ctx: Ctx, body: dict):
         req = {"title": title, "type": "personal", "task_of": tid, **slot}
         if area in ctx.area_ids:
             req["area"] = area
-    ev = _merge_event(ctx, stored, req, eid)
+    ev = _merge_event(ctx, stored, req, eid, allow_archived=True)
     _event_guard(ctx, ev, stored)
     if eidx is None:
         events.append(ev)
@@ -908,7 +913,7 @@ def h_review_schedule(ctx: Ctx, body: dict):
            "type": "personal", "review_of": tid}
     if item.get("area") in ctx.area_ids:
         req["area"] = item["area"]
-    ev = _merge_event(ctx, stored, req, eid)
+    ev = _merge_event(ctx, stored, req, eid, allow_archived=True)
     _event_guard(ctx, ev, stored)
     if idx is None:
         events.append(ev)

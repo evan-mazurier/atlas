@@ -9,7 +9,7 @@ import pytest
 
 from test_atlas_hook import HERE, SID, env  # noqa: F401  (env is a fixture)
 from test_publish_gate import classify, classify_all, denied, grant, refusals
-from test_resolved_carry import age, carried
+from test_resolved_carry import abandoned, age, carried
 
 # ------------------------------------------------------------------ one grant = one publish
 
@@ -229,7 +229,7 @@ def test_a_ready_from_a_reviewer_launched_alongside_the_failing_one_does_not_res
     assert S["last_verdict"] == "READY" and S["last_verified"] >= S["version"]
     age(env)
     env.bash(": team-type chore")
-    assert carried(env)                          # still unresolved: B started before A's NEEDS CHANGES arrived
+    assert abandoned(env)                        # still unresolved: B started before A's NEEDS CHANGES arrived
 
 
 def test_a_ready_from_a_reviewer_launched_after_the_failure_resolves(env):
@@ -261,10 +261,14 @@ def test_derive_mirrors_the_parallel_reviewer_race(env):
     _hand_back(env, "B", "READY")
     age(env)
     env.bash(": team-type chore")
-    legacy = [{k: v for k, v in e.items() if k != "carried"} for e in env.events()]
-    for evs in (env.events(), legacy):
+    no_flag = [{k: v for k, v in e.items() if k != "carried"} for e in env.events()]
+    for evs in (env.events(), no_flag):              # the abandon keeps the old task's round and opens the next fresh
         ts = derive.derive_v2(evs, query.load_workflows())
-        assert [t["rounds"]["needs_changes"] for t in ts] == [1, 1]
+        assert [t["rounds"]["needs_changes"] for t in ts] == [1, 0] and ts[0]["status"] == "abandoned"
+    legacy = [{k: v for k, v in e.items() if k not in ("carried",) and e["ev"] != "task_abandoned"}
+              for e in env.events() if e["ev"] != "task_abandoned"]          # an old stream: no abandon event
+    ts = derive.derive_v2(legacy, query.load_workflows())
+    assert [t["rounds"]["needs_changes"] for t in ts] == [1, 1]
 
 
 # ------------------------------------------------------------------ forged_grant is linear

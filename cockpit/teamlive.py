@@ -51,6 +51,7 @@ PAIR_WINDOW = 120   # seconds: a helper's Start may come this long after its lau
 MIN_LIFETIME = dt.timedelta(seconds=30)  # a session this short with no helper / playbook / WorkType is a CLI call, not a task
 WAITING_WINDOW = dt.timedelta(hours=2)  # idle after a Stop this recently = "waiting" for the person (v2 attention bar)
 MAX_STEPS = 12
+MAX_CHART_HELPERS = 200    # safety cap on helper runs per session in the Team chart (the latest ones, rows merge per task and type); helpers_total has the count
 
 # --- vocabulary --------------------------------------------------------------------------------------
 # display id -> (name, tier). Ids are the org chart's creature ids; `op` is the human.
@@ -58,13 +59,13 @@ AGENTS = {
     "op": ("Operator", "human"), "chief": ("orchestrator", "opus"), "scout": ("scout", "haiku"),
     "clerk": ("sweeper", "haiku"), "analyst": ("researcher", "sonnet"), "builder": ("implementer", "sonnet"),
     "writer": ("drafter", "sonnet"), "labtech": ("test-runner", "haiku"), "inspector": ("reviewer", "sonnet"),
-    "partner": ("senior-reviewer", "opus"),
+    "partner": ("senior-reviewer", "opus"), "advisor": ("advisor", "fable"),
 }
 # helper `agent_type` (the subagent name) -> display id. `explore` is Claude Code's built-in recon helper.
 AGENT_TYPE_ID = {
     "scout": "scout", "explore": "scout", "sweeper": "clerk", "researcher": "analyst",
     "implementer": "builder", "drafter": "writer", "test-runner": "labtech",
-    "reviewer": "inspector", "senior-reviewer": "partner",
+    "reviewer": "inspector", "senior-reviewer": "partner", "advisor": "advisor",
 }
 
 # playbook command -> (type label, route). The route is the org chart's, in display ids.
@@ -638,7 +639,26 @@ def _analyse(sid: str, evs: list[dict], now: dt.datetime, cost_fn, helper_mtime_
             continue
         segs.append([hrs(max(h["start"], today0)), hrs(b), AGENTS[h["agent"]][1]])
     segs = [s for s in segs if s[1] > s[0] or s[2] != "idle"]
+
+    # --- helper runs for the chart (one per agent id, by start) and the orchestrator's lifeline span
+    chart, seen_n = [], {}
+    for h in sorted((g for g in helpers if g["agent"]), key=lambda g: (g["start"], g["idx"])):
+        seen_n[h["agent"]] = seen_n.get(h["agent"], 0) + 1
+        chart.append({"agent_id": h["id"], "agent": h["agent"], "type": h["type"], "n": seen_n[h["agent"]],
+                      "label": h["label"], "bg": h["bg"], "start": _hhmm(h["start"]), "stop": _hhmm(h["stop"]) if h["stop"] else None,
+                      "start_h": round(hrs(h["start"]), 4), "stop_h": round(hrs(h["stop"]), 4) if h["stop"] else None,
+                      "running": h["stop"] is None, "resumed": h["resumed"], "verdict": None})
+    helpers_total = len(chart)
+    ids_all = [c["agent_id"] for c in chart] if helpers_total > MAX_CHART_HELPERS else None   # uncapped, for per-task counts
+    chart = chart[-MAX_CHART_HELPERS:]
+    span_start = hrs(evs[0]["_t"])
+    span_end = hrs(now if live else last_t)
+    if chart:
+        span_start = min([span_start] + [c["start_h"] for c in chart])
+        span_end = max([span_end] + [c["stop_h"] for c in chart if c["stop_h"] is not None])
     return {
+        "helpers": chart, "helpers_total": helpers_total, "helper_ids_all": ids_all,
+        "span": {"start_h": round(span_start, 4), "end_h": round(max(span_end, span_start), 4)},
         "sid": sid, "project": project_label(folder, cwd), "folder": folder, "transcript": transcript,
         "type": label, "tag": tag, "ask": ask, "playbook": cmd,
         "status": "working" if live else "idle", "chief_working": chief_working,
@@ -710,7 +730,7 @@ def build_state(events: list[dict], now: dt.datetime, exclude_sids=(), cost_fn=N
     rows.sort(key=lambda r: r["start"])
     out_sessions = [{k: s[k] for k in ("sid", "title", "project", "type", "tag", "ask", "playbook", "status", "since",
                                        "idle_since", "cost", "steps", "cwd", "waiting", "done", "area_arg", "plan_ref",
-                                       "via_helpers", "live_helpers")} for s in sessions]
+                                       "via_helpers", "live_helpers", "helpers", "helpers_total", "helper_ids_all", "span")} for s in sessions]
     all_segs = [g for r in rows for g in r["segs"]]
     ax_start = int(min([g[0] for g in all_segs] + [now.hour + now.minute / 60.0 - 1]))
     ax_end = max(ax_start + 2, int(now.hour + now.minute / 60.0) + 1)

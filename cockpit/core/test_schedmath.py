@@ -357,3 +357,16 @@ class FillFreeSlots(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_occurs_on_monthly_weekday_rule():
+    import datetime as dt
+    d0 = dt.date(2026, 11, 28)
+    r = {"freq": "monthly", "weekday": "sat", "week": "last"}
+    days = [d0 + dt.timedelta(days=i) for i in range(0, 130)]
+    got = [d.isoformat() for d in days if schedmath._occurs_on(d0, r, d)]
+    assert got == ["2026-11-28", "2026-12-26", "2027-01-30", "2027-02-27", "2027-03-27"]
+    assert not schedmath._occurs_on(dt.date(2026, 12, 26), r, dt.date(2026, 11, 28))      # before the anchor
+    r2 = {**r, "interval": 2, "count": 2}
+    got = [d.isoformat() for d in days if schedmath._occurs_on(d0, r2, d)]
+    assert got == ["2026-11-28", "2027-01-30"]

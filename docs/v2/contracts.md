@@ -181,7 +181,7 @@ facts.
 | `tamper` | any hook run that finds the installed config's mode ≠ the last `mode` event | `found`, `expected` |
 | `check` | PostToolUse Edit/Write on `areas.yaml` or `cockpit/web2/look.css` | `task`, `file`, `ok`, `problems` (list of ≤ 5 short strings), `version`, an `ok` check on a change touching ONLY those files counts as READY for the done-lock |
 | `edit` | PostToolUse Edit/Write/NotebookEdit (main or helper), non-exempt path (§6.5) | `task`, `path` (absolute), `tool`, `version` (after the bump) |
-| `refusal` | any guard that refuses (or would refuse in record mode) | `task`, `tool?` (a `rework` refusal of a session-starting or messaging tool, §6.3: the tool name only, never prompt or message text), `guard` ∈ `rework` `done_lock` `quick_question` `publish` `config` `declare` (§6.6a, since 2026-10-15; a helper-spawn refusal with `helper`, `label`, `tuid` as below), `would` (bool: true in record mode = logged, not enforced), `detail` (≤ 200 chars, the reason shown); since 2026-10-10, when the refusal is of a helper spawn (the Agent tool): `helper` (the refused `subagent_type`), `label` (the spawn's description ≤ 60) and `tuid` (the spawn's tool-use id, so a later `helper_paired` with the same `tuid` gives the helper's `agent_id`). Older events lack them. The top-level `agent_id` is the SPAWNER's, never the refused builder's. A `publish` refusal (§6.4b, since 2026-10-10) is never a would-refusal (`would: false` in every mode) and carries `what` (the first matched family, for example `git push`; never the command), `count` (how many publishes the command held) and `actor` (`main`, or the helper's type, with the helper's `agent_id` in the top-level field). A `config` refusal (§6.4c, since 2026-10-13) is likewise never a would-refusal (`would: false` in every mode), is NOT a rework refusal, and carries `path` (an Edit tool: the file path) or `what` (a shell command: a short label such as `claude-md` or `install-tool`, never the command), `tool`, and `actor`. |
+| `refusal` | any guard that refuses (or would refuse in record mode) | `task`, `tool?` (a `rework` refusal of a session-starting or messaging tool, §6.3: the tool name only, never prompt or message text), `guard` ∈ `rework` `done_lock` `quick_question` `publish` `config` `declare` (§6.6a, since 2026-10-15; a helper-spawn refusal with `helper`, `label`, `tuid` as below) `edit_limit` (§6.9, the main-session edit stop; `would` as in every guard), `would` (bool: true in record mode = logged, not enforced), `detail` (≤ 200 chars, the reason shown); since 2026-10-10, when the refusal is of a helper spawn (the Agent tool): `helper` (the refused `subagent_type`), `label` (the spawn's description ≤ 60) and `tuid` (the spawn's tool-use id, so a later `helper_paired` with the same `tuid` gives the helper's `agent_id`). Older events lack them. The top-level `agent_id` is the SPAWNER's, never the refused builder's. A `publish` refusal (§6.4b, since 2026-10-10) is never a would-refusal (`would: false` in every mode) and carries `what` (the first matched family, for example `git push`; never the command), `count` (how many publishes the command held) and `actor` (`main`, or the helper's type, with the helper's `agent_id` in the top-level field). A `config` refusal (§6.4c, since 2026-10-13) is likewise never a would-refusal (`would: false` in every mode), is NOT a rework refusal, and carries `path` (an Edit tool: the file path) or `what` (a shell command: a short label such as `claude-md` or `install-tool`, never the command), `tool`, and `actor`. |
 | `publish_grant` | UserPromptSubmit whose prompt starts with `/allow-publish [n]` (interactive entry, main session only; §6.4b) | `n` (1..5, default 1), `expires` (ISO, 30 minutes after the grant), `entry` |
 | `publish_allowed` | PreToolUse Bash/PowerShell: a publish command let through by a grant (§6.4b) | `what` (the matched family; never the command) |
 | `config_grant` | UserPromptSubmit whose prompt starts with `/allow-config` (interactive entry, main session only; §6.4c) | `expires` (ISO, 15 minutes after the grant), `entry` |
@@ -197,6 +197,8 @@ facts.
 | `mode` | `tools/hooks_mode.py` | `from`, `to` |
 | `bypass_attempt` | PreToolUse Bash/PowerShell denied by rule B (§6.4) | `tool`, `matched` (≤ 60), `denied` (true); since 2026-10-10 also `actor` (`main` or the helper type), `agent_id?`, `actor_task?` (the helper's launch label ≤ 60), `desc?` (the Bash `description`, ≤ 160, masked, see §1), `target` (derived label: `ledger`, `ledger-day:YYYY-MM-DD`, `hooks-config`, `hooks-program` or `hooks-folder`; never command text), `effect` ∈ `read` `change` `delete` `unclear` (deterministic, linear-time classification of the WHOLE command, every `;`/`&&`/pipe segment; `read` only when every segment has a read-tool head and no change signal; any interpreter, `xargs`, `-exec` or opaque tool gives `unclear` unless a clear change or delete signal is present; a command over 4096 characters is `unclear` without being classified). Older events lack the new fields. |
 | `bypass_note` | `tools/ledger_note.py --at <t> --sid <sid> --text "..."` | `ref` (`<t>\|<sid>` of the attempt), `sid` (the attempt's), `by` (`main`: the hook refuses the tool to helpers), `text` (≤ 200). Appended through the store's locked, chained append; every note for a `ref` is shown under the attempt's report, oldest first, with time and author. A helper whose command segment RUNS the tool (not one that merely names the file, e.g. `grep x tools/ledger_note.py`) is denied and logged as a `bypass_attempt` with `matched` = "ledger note by a helper". |
+
+**Helper type `advisor`** (since go-live, see the build log). Not an event kind: `advisor` is a helper type that is neither a builder nor a reviewer (in no `builders` or `reviewers` list and in no crew). Its `helper_start`, `helper_end` and `cost` events are recorded like any helper's (`helper: "advisor"`, `model` a Fable model id); it never produces a `verdict`, never a rework round, and never marks changes as checked. The spawn description (the `helper_start` label) starts with `scope:`, `unstick:` or `design:` by convention, which the weekly report reads. The weekly report's Advisor section compares consult tasks with no-consult tasks matched on k, the rounds before the first consult: per k, consult tasks' rounds after the consult against no-consult tasks' rounds after their k-th round; legacy verdicts without `round` count per distinct failing version.
 
 The `task` field is the **current task id** of the session at the time of the event (or `null` if no
 task is open). A task id is `<first 8 chars of sid>-<n>`, `n` = 1, 2, ... in order of the task-opening
@@ -253,10 +255,21 @@ Task-opening rules:
   strict side). Several reviewers launched before a failing review arrives count once; a reviewer resumed with
   SendMessage counts as launched at the resume (`helper_resume`). The hook decides this when it records the verdict and
   writes it as `round: true|false` on the NEEDS_CHANGES `verdict` event (`apply_event` uses the field; a legacy event
-  without it is decided by the same rule). State: `nc_rounds` (int, own rounds, reset on a fresh open) and `carried_nc`;
-  `nc_count = carried_nc + nc_rounds`; `nc_at` = `spawn_seq` at every NEEDS CHANGES. `derive` uses the `round` field; a
-  NEEDS_CHANGES verdict without it (a legacy stream) counts one round per distinct failing `version`, so historic numbers
-  do not change.
+  without it is decided by the same rule). State: `nc_rounds` (int, own rounds of both tiers, reset on a fresh open) and
+  `carried_nc`; `nc_count = carried_nc + nc_rounds` (the total: done-lock, ledger stats and reports use it); `nc_at` =
+  `spawn_seq` at every NEEDS CHANGES. **Two reviewer tiers (since 2026-11-03):** `senior` = the helper `senior-reviewer`,
+  `routine` = every other reviewer. The round rule above is applied PER TIER: a NEEDS CHANGES is a new round for its
+  tier when it is that tier's first (nothing carried, no own round of the tier), or its reviewer was launched after that
+  tier's previous failing review arrived (`nc_at_t[tier]`, set to `spawn_seq` when a failing review of that tier arrives;
+  an unknown tier, such as a late carry at the next open, sets both), or its `seq` is unknown. A routine and a senior
+  reviewer launched together that both fail therefore count two rounds (one per tier); two routine reviewers launched
+  together still count once. State adds `nc_rounds_t` (`{senior: n, routine: n}`, own rounds per tier, reset with
+  `nc_rounds`) and `nc_at_t`. The tier is read from the `helper` field the `verdict` event already carries (no new
+  field; a legacy line is treated the same way by helper name). `derive` keeps its total (`rounds.needs_changes`, `own`, `carried`: stats and reports read them) and also counts
+  own rounds per tier from the `helper` field of the verdicts that count as a round (see §1.7); a NEEDS_CHANGES verdict without the field (a legacy stream) counts
+  one round per distinct failing `version`, so historic numbers do not change. On such a legacy stream (no `round` field)
+  the hook's replay (`rebuild_state`) can count a routine and a senior failure on the same version as two rounds, while
+  `derive` counts one per version; the totals in history do not change.
 * **Late verdicts** (since 2026-10-26). A NEEDS_CHANGES or ESCALATE verdict whose task is not the open task (its reviewer
   was launched for an earlier task) or that arrives when no task is open is never lost: it counts on the open task as a
   carried round (a late NEEDS CHANGES always counts +1, whatever `nc_at` was: `carried_nc += 1`, `nc_at = spawn_seq` so only a reviewer launched after it can resolve, `chained`
@@ -325,7 +338,7 @@ per (scope, model) with a non-zero delta, then store the new offsets. When the p
 `custom-title` entry newer than the last one recorded, the `cost` event carries `title` (that is the
 ledger's durable source of the session's sidebar title). `weighted` = `(in + out) × weight(model, in)` with the
 weights of `dashboard/usage.py:model_weight` (copied into the hook config, `hooks/atlas_config.json`,
-so the hook never imports the repo). A transcript that shrank resets its offset to 0. Lines that do
+so the hook never imports the repo). Weights (Sonnet = 1.0): haiku-5 0.05 (0.25 above 100k prompt tokens), haiku 0.5, opus 2.0, sonnet 1.0, **fable 4.0** (since go-live, see the build log; price ratio, the `advisor` helper's model); an unknown model weighs 1.0 and shows as `sonnet`. A transcript that shrank resets its offset to 0. Lines that do
 not parse are skipped. Cost reading must not block the Stop beyond 2 s: stop reading and keep the
 offset where it got to.
 
@@ -375,8 +388,13 @@ value (`started` to `ended`, or to the last event while open). v1 imported tasks
 }
 ```
 
+* Per-tier fields (since 2026-11-03): `rounds.own_routine` and `rounds.own_senior` = own rounds by tier (`senior-reviewer` is
+  `senior`, every other reviewer `routine`; a legacy verdict without `round` is assigned to its helper's tier by the same
+  per-version rule); `rounds.used` = `carried + max(own_routine, own_senior)`, and `rounds.left` = `max(0, budget +
+  granted - used)` (the hook's rule, §6.3), so a task with routine 2 and senior 1 under budget 2 shows `left` 0 while
+  `needs_changes` is 3. The bypass report's "N of M rework used" uses `used`.
 * `rounds.own` = this task's own NEEDS CHANGES rounds, `rounds.carried` = rounds carried over from the previous unresolved
-  task in the session (`needs_changes` = carried + own; `left` = budget + granted - needs_changes). Own rounds follow
+  task in the session (`needs_changes` = carried + own; `left`: see the per-tier fields above). Own rounds follow
   "Rounds" in §1.2: a NEEDS_CHANGES verdict with a `round` field counts when it is true; one without it (legacy) counts one
   round per distinct failing `version`. An `abandoned` task keeps its own rounds; the next task starts at `own 0, carried 0`
   (or carries when its `work_type` has `carried: true`). Legacy events are still read: `rework_recalled` gives the task `carried += nc` (also
@@ -384,6 +402,26 @@ value (`started` to `ended`, or to the last event while open). v1 imported tasks
   with `for_task` counts on that task when it exists in the session, else on the current task. A stream without
   `task_abandoned` derives exactly as before. Anything that sums or buckets rounds per task (the stats `rounds_hist`, the
   weekly report) uses `own`, so a carried count is never counted twice.
+  The weekly report's "Review and gates" section (`tools/weekly_report.py`) carries one more signal (since 2026-11-03,
+  JSON `review.senior_after_routine_ready`: list of task ids): tasks closed in the week where a `senior-reviewer` returned
+  NEEDS_CHANGES after another reviewer had returned READY on the same task, read off the task's `verdicts` (late verdicts
+  excluded); the line shows the count and the ids.
+  Right after the rounds line it prints "Rework per closed task" (JSON `review.rework_concentration`: `rounds`, `closed_tasks`,
+  `per_task`, `top_session`, `top_rounds`, `top_pct`, `top_tasks`, `per_task_without_top`): rounds divided by closed tasks, the
+  session (task id up to the last `-`) holding the most rounds with its share, and the rate without that session; same closed
+  tasks and same `own` round count as the rounds line; `n/a` and null fields when there are no rounds. The "Waste signals"
+  section adds three lines, all derived from existing events (no new hook event; JSON `waste`): `main_edit_run`
+  (`{max, max_task, stop, tasks_above_stop}`: per task the longest run of main-session `edit` events, no `agent_id`, between
+  `implementer`/`drafter` `helper_start` launches, the task start counting as a reset; memory files emit no `edit`; only tasks whose type's crew in `workflows.yaml` has an `implementer` or `drafter` are counted, as in the hook's stop: `undeclared` counts, and a `playbook` uses its `playbook_crews` entry by the `playbook` event's `cmd`, a builder being assumed when the command is unknown),
+  `edit_limit_refusals` (`{enforced, would}`: `refusal` events with guard `edit_limit`, the 6-edit stop) and
+  `test_runner_reminders` (`{total, tasks}`: the section 6.9a reminder emits no event, so it is derived: on a `coding` task, a
+  `reviewer` or `senior-reviewer` `helper_start` after an `implementer` `helper_end` with no `test-runner` `helper_start` since; counted per reviewer launch, like the hook, which is stateless).
+  The report's weighted-usage section also carries a cost split (JSON `usage_weighted`): `by_helper_area_type` = list of
+  `{helper, area, type, weighted}` summed over the week's closed tasks from `cost.by_helper` (weighted > 0 only, sorted
+  descending; area and type normalised as in the by-area and by-type tables: `unassigned`, `undeclared`), and
+  `senior_top_tasks` = up to 5 `{id, area, type, weighted}` with the highest `senior-reviewer` cost (> 0), descending, ids
+  only (no titles). The Markdown shows both after "By helper" ("By helper, area and type", "Most expensive senior-reviewer
+  tasks"); an empty list renders `_none_`.
 * `title` = the task's name: summary `goal`, else the first helper's first label (the description the main session gave it),
   else the session title, else null. The tasks endpoints (§5.2) replace it with `plan_title` when that resolves, so the field
   is the one name to show; `session_title` stays for a muted second line. A v1 job that never finished is `ended`
@@ -458,7 +496,7 @@ from `areas.yaml`) and `--v1-grid`, plus `color-scheme: dark`. Dark only:
 ```
 --bg #000000  --panel #0a0a0a  --line #1f1f1f  --grid #1a1a1a  --axis #333333
 --ink #ededed  --ink-2 #a1a1a1  --muted #8f8f8f  --accent #3291ff  --data #3987e5
---m-opus #a66ff2  --m-sonnet #2c58dc  --m-haiku #1fa88f  --pos #3987e5  --neg #e66767
+--m-opus #a66ff2  --m-sonnet #2c58dc  --m-haiku #1fa88f  --m-fable #f5a142  --pos #3987e5  --neg #e66767
 --cat-1 #379bec  --cat-2 #f90dd1  --cat-3 #314df5  --cat-4 #ce7499
 --cat-5 #9769fc  --cat-6 #bb0a71  --cat-7 #08629c  --cat-8 #9c0dc8
 --ctx-1 #9a9a9a  --ctx-2 #6f6f6f  --ok #0ca30c  --warn #fab219  --crit #d03b3b
@@ -531,7 +569,7 @@ and served from a cache (ledger stats).
 | --- | --- |
 | `GET /api/v2/areas` | `{ok, areas: [{id, name, color, group, archived}]}` from `areas.yaml` |
 | `GET /api/v2/attention` | `{ok, working: n, waiting: n, sessions: [{sid, title, area, status}], pending_reviews: n, team_error: string or null}`, sessions from `teamlive.snapshot()` (`status` ∈ `working` `waiting` `idle`; a session with a live helper is `working` even after its own turn ended, see "Live helpers" below), pending reviews from `plan.api.review_tray_count()` (import guarded: 0 if absent; *since 2026-10-15 the app bar no longer shows `pending_reviews`*, the key stays). **No `window` key:** the usage-window meter was removed 2026-10-10 (an estimate that never matched Claude's own meter; the real one is in the Claude desktop app), with its background refresher thread (`ATLAS_SHELL_NO_WINDOW_THREAD`), `shell_api.compute_window` and the v1 helpers `core/watcher.py` and `core/ledger.py` that fed it (`tools/import_v1_ledger.py` and the v1 data in `ledger/events.jsonl` are untouched) |
-| `GET /api/v2/team` | `teamlive.snapshot()` plus `area` per session (`area_for(areas, cwd)`); each session also carries `via_helpers` (bool) and `live_helpers` (`[{agent, name, label, bg}]`), see "Live helpers" below |
+| `GET /api/v2/team` | `teamlive.snapshot()` plus `area` per session (`area_for(areas, cwd)`); each session also carries `via_helpers` (bool) and `live_helpers` (`[{agent, name, label, bg}]`), see "Live helpers" below, plus `helpers`, `helpers_total` and `span` (the Team chart, see "Helper runs for the Team chart" below) |
 | `GET /api/v2/shell/roster` | `{ok, helpers: [{id, model, use_for, never}], types: [{id, label, crew, budget, rung, move}], playbooks: [{command, area, crew, budget, per_task}]}`, read per request: helpers listed from the agent files (`ATLAS_AGENTS_DIR`, default `~/.claude/agents/*.md`, model from frontmatter); `use_for` and `never` verbatim from the `| Helper | Model | Use it for | Never |` table in the global instructions file (`ATLAS_TEAM_DOC`, default `~/.claude/CLAUDE.md`), falling back to the agent description / first Never line when the table is missing; a personal name in the table is rendered as "the operator", types and playbooks from `workflows.yaml` (`undeclared` skipped; `budget: null` = no rework; a playbook's `crew`/`budget` come from `playbook_crews`, budget falling back to `types.playbook.budget`; the Playbook type row renders "set per playbook (below)" instead of a crew) |
 | `GET /api/v2/ledger/*` | owned by Lane 1, see 5.2 |
 
@@ -552,6 +590,35 @@ apply unchanged. When the session is working only because of helpers (`via_helpe
 name and task label, the helper pipeline shows it as working, and `/api/v2/attention` counts the session as working,
 not waiting. When the last helper finishes and the conversation is idle, the session returns to waiting or idle.
 
+**Helper runs for the Team chart (2026-11-16, additive).** Each session in `GET /api/v2/team` also carries
+`helpers`: one entry per helper run, ordered by start, `{agent_id, agent, type, n, label, bg, start, stop, start_h, stop_h,
+running, resumed, verdict, task}`. `agent` is the display id (the key of `T` in `team-creatures.js`, as in `steps`), `type` the
+agent type as launched, `n` the 1-based instance number per `agent` within the session (by start, counted before the cap),
+`label` the launch brief label, `start`/`stop` "HH:MM" (`stop` null while running), `start_h`/`stop_h` hours since
+midnight (floats, `stop_h` null while running), `running` = no stop yet, `resumed` = the same agent id ran again (one
+entry per agent id, like a step), `verdict` null or the last `verdict` event of that `agent_id` today (`READY`,
+`NEEDS_CHANGES`, `ESCALATE`). A helper type with no creature is left out. At most 200 entries (the latest 200, a safety cap: rows now merge per
+task and type); `helpers_total` is the full count. `span: {start_h, end_h}` is the orchestrator's lifeline: the session's first event
+today (or the earliest helper start) to now while the session is working, else to its last event (widened to cover every
+helper stop). Idle and done sessions carry them too. `teamlive` builds everything but `verdict`; `shell_api.team_payload`
+fills `verdict` from today's day file of the ledger (`ledger2.store.day_file`, read once per request and cached by file
+mtime and size); any error leaves it null and never fails the payload. `steps` and every other field are unchanged.
+
+*Task groups (2026-11-16, additive).* Each helper also carries `task`: the ledger task id it belongs to, or null. It is the
+LAUNCH task: `helper_paired.tuid` is matched to the `helper_start` with that `tuid` and its `task` is used (so a helper
+paired after a new `: team-type` declaration stays in the group it was launched in); when `tuid` is null or unmatched the
+`helper_paired.task` is used; a `helper_resume` never changes a known task (a resumed helper stays in its launch group,
+`resumed` marks it). Each session with helpers also carries `tasks`: `[{id, type, area, title, plan_ref, plan_title, started,
+status, final_verdict, runs}]`, one per task id among its helpers ordered by `started`, then, when some helpers have `task`
+null, the group `{id: null, title: "Other helper runs", type/area/started/status/final_verdict: null, runs}` last. The
+fields come from `ledger2.query.all_tasks()` (cached there, joined by id, `final_verdict` is the record's own, no rule is
+recomputed here; `plan_title` is the linked Plan item's title when `plan_ref` resolves, as in the ledger API). A task missing
+from `all_tasks()` (cache lag) is never dropped: `type` and `area` come from today's `work_type` or `playbook` event of
+that id in the day file, `started` from its `t`, and `title`, `status`, `final_verdict` are null. `runs` counts the task's
+helper runs from the UNCAPPED list (`teamlive` adds `helper_ids_all`, every agent id, only when `helpers` was capped; the
+API drops it from the answer). The membership maps are built in the same single pass and cache as the verdicts. A row's
+verdict chip is that helper's last verdict today; a group header shows the task's `final_verdict`, so the two can differ.
+
 Lane 2 may make **additive** changes to `cockpit/teamlive.py` (new fields only: `cwd` per session,
 status `waiting` = idle with the last main-session event a Stop, within 2 h). The window split `usage.window_by_model()` once planned here was removed 2026-10-11 with the rest of the usage-window code. Nothing
 else in those files changes. Note: `usage.collect` over-counts ~3.7× (one usage line
@@ -563,10 +630,10 @@ per content block); left as is, recorded in the build log.
 | --- | --- |
 | `GET /api/v2/ledger/tasks?week=YYYY-Www&area=&type=&status=&src=&limit=200` | `{ok, week, tasks: [TaskRecord]}` newest first; no `week` = last 7 days |
 | `GET /api/v2/ledger/task?id=` | `{ok, task: TaskRecord, events: [event…]}` |
-| `GET /api/v2/ledger/stats?week=` | `{ok, week, kpis: {tasks_closed, first_pass_ready_pct, caught, rework_refused, weighted_usage} each {value, prev, spark: [12 weekly values]}, usage_by_day: [{day, opus, sonnet, haiku}] (14 days), time_by_area: [{area, hours}], rounds_hist: {"0": n, "1": n, "2": n, "refused": n} (4 weeks), usage_by_helper: [{helper, tier, weighted}], first_pass_by_week: [{week, pct}] (8 weeks), ladder: [{type, label, rung, budget, tasks_4w, first_pass_pct, move}], unverified: n, usage_by_type: [{key, label, kind, weighted, tasks}], bypass: {count, blocked, recent: [{t, tool, matched, denied}]}, integrity: {intact, breaks: [{file, line}], files, lines}}` |
-| `GET /api/v2/ledger/report?week=` | `{ok, path, markdown}` the saved weekly report from `~/.atlas/reports/YYYY-Www.md` if present |
+| `GET /api/v2/ledger/stats?week=` | `{ok, week, kpis: {tasks_closed, first_pass_ready_pct, caught, rework_refused, weighted_usage} each {value, prev, spark: [12 weekly values]}, usage_by_day: [{day, opus, sonnet, haiku, fable}] (14 days), time_by_area: [{area, hours}], rounds_hist: {"0": n, "1": n, "2": n, "refused": n} (4 weeks), usage_by_helper: [{helper, tier, weighted}], first_pass_by_week: [{week, pct}] (8 weeks), ladder: [{type, label, rung, budget, tasks_4w, first_pass_pct, move}], unverified: n, usage_by_type: [{key, label, kind, weighted, tasks}], bypass: {count, blocked, recent: [{t, tool, matched, denied}]}, integrity: {intact, breaks: [{file, line}], files, lines}}` |
+| `GET /api/v2/ledger/report?week=` | `{ok, path, markdown, summary}` the saved weekly report from `~/.atlas/reports/YYYY-Www.md` if present. `summary` (additive, built by `ledger2/report_summary.py`, never raises, empty parts when the source is missing or odd) = `{kpis: [{key, label, value, unit?}] (from the sibling `YYYY-Www.json`: tasks_closed, first_pass_ready_pct, rework_per_task, hours, weighted_usage; a missing field omits that kpi), lessons: [{headline, body}] (numbered items of `## Lessons`), changes: [{name, status}] (first and last column of the `### Earlier changes` table), proposed: [headline] (numbered items after that table in the `## ... changes` section)}` |
 
-`tier` = opus/sonnet/haiku from the model id. Weeks are ISO weeks, local time. Definitions:
+`tier` = opus/sonnet/haiku/fable from the model id (anything else: sonnet). Weeks are ISO weeks, local time. Definitions:
 the task list shows tasks whose span overlaps the week; KPIs count tasks by `ended` in the week;
 `first_pass_ready_pct` = closed tasks whose first verdict is READY ÷ closed tasks with ≥ 1 verdict;
 `rework_refused`: `value` = enforced + would, plus `split: {enforced, would}`, carry-over notices (`notice: true`) excluded; `time_by_area` = sum of task active time (`duration_s`), a task with no area or with an area id no longer in `areas.yaml` counted under `unassigned` (one row, 2026-10-15); `rounds_hist.refused` = tasks with a real rework refusal (carry-over notices excluded); the other buckets (0, 1, 2+) use each task's `rounds.own` (since 2026-10-26, so a carried count is not counted twice);
@@ -597,8 +664,8 @@ bypass report ("After a rework refusal") fires only when the attempt's actor is 
 `workflows.yaml`) and a rework `refusal` in the same session within 30 min concerned the same helper type (or the same
 `agent_id`, through the refusal's `tuid` and `helper_paired`); reviewers, scout, test-runner and the orchestrator never trigger
 it, and a refusal without a recorded helper never does. The context line then says "A rework round was over budget
-for this task (helper not recorded)", and a count above the budget reads "N review rounds asked for changes on this
-task (budget B; rounds beyond it were logged, not enforced)" instead of "N of B rework used".
+for this task (helper not recorded)", and a count above the budget (`used`) reads "N review rounds asked for changes on this
+task (budget B; rounds beyond it were logged, not enforced)" with N = `needs_changes`, the true total over both tiers, instead of "N of B rework used".
 Public Python functions (used by others, import-guarded):
 `ledger2.query.tasks(day_from: str | None = None, day_to: str | None = None, area: str | None = None,
 type: str | None = None, status: str | None = None, src: str | None = None, limit: int = 200) -> list[dict]`,
@@ -636,7 +703,7 @@ Join 1 from the live files); the live `schedule.yaml` is written by v2 only afte
 A missing schedule or tasks file: GET returns empty sections; writes return 503 `no plan file` and
 never create one.
 Recurring events are expanded to occurrences inside the range (same rules as v1 `recur`/`skips`/
-overrides). An event's area: its explicit `area` field (always wins), else the first area (file order) whose
+overrides). An event's `recur` is `{freq: daily|weekly|monthly, interval?, until?, count?}`; a monthly series may also carry `weekday: mon..sun` and `week: "last"|1..4` (that weekday in that week of the month, for example the last Saturday), the same rule as a deadline's (§5.3a, one implementation in `schedmath._occurs_on`). Write 400s: `recur.weekday needs freq monthly`, `recur.weekday must be one of mon, ...`, `recur.week must be 'last' or 1 to 4`, `recur.week needs recur.weekday`, and the event's `day` must itself match the rule (400 `can't save '<title>': <day> is not the <week> <weekday> of its month`). A whole-series `event/move` (no `occurrence`) is checked the same way: 400 `can't move '<title>': <day> is not the <week> <weekday> of its month` (moving a single occurrence is exempt). On a weekday rule `recur.count` must be a whole number of 1 or more: 400 `recur.count must be a whole number >= 1` (booleans and non-integers are refused). Other recur keys are kept as sent. An event's area: its explicit `area` field (always wins), else the first area (file order) whose
 `match.title_prefix` starts its title, else the first area (file order) whose `match.keywords` has a WHOLE
 WORD anywhere in the title (case and accents ignored; `Run` does not match `Running`) (`area_source: "match"`
 for both), else `null`. Archived areas are skipped by both match steps (an explicit `area` still resolves to them). `areas.yaml` format: `match: {title_prefix: [...], keywords: [...]}`, both keys optional.
@@ -674,12 +741,11 @@ the effective attention changed, so a notes-only edit on legacy overlapping data
 `tools/plan_day.py` applies it through this API. The Plan screen no longer creates events (no click or drag on empty time,
 no "New event" button); it still drags and resizes existing events, opens an
 existing event to edit or delete it, and shows a refused move with the server's reason as visible text.
-*(Amended 2026-10-15.)* Memo cards from the "To schedule" rail (§8.4a) may be dragged onto the week or day calendar: the drop
+*(Amended 2026-10-15.)* Memo cards from the "To schedule" rail (§8.4a) may be dragged onto the week calendar: the drop
 posts `task/place` (`target: "me"`, duration = the task's `estimate_min`, 60 when missing), which creates the linked event or MOVES the
-one already linked. The screen still never creates events on empty time (no click or drag on an empty slot). Week view: full
+one already linked. The screen still never creates events on empty time (no click or drag on an empty slot). The screen is the week only (no Day/Week control, no day view; Previous and Next step one week, Today goes to the current week). Full
 events span the column, shared events are packed into tracks inside their overlap cluster (width = column / tracks), `SHORT · title`
-at half a column or more, the first three letters of `SHORT` at a third, no count marker on parallel clusters. Day view: one row per track needed that day,
-full events span all rows; the day header shows `work Xh · sessions Yh` over the shared events only (union of their time, sum of their durations; full blocks such as training, meals and leisure are left out); a third-width week block and a day-view block of 30 minutes or less show only the first three letters of their area tag (time and title in the tooltip); every block is drawn at its true length.
+at half a column or more, the first three letters of `SHORT` at a third, no count marker on parallel clusters. A week block of a third of a column shows only the first three letters of its area tag (time and title in the tooltip); every block is drawn at its true length.
 **Agents lane: PARKED (2026-10-10, decided by the operator).** The Plan screen shows only the operator's time: no
 agents column in the week view, no "Agents" rows in the day view, no agents drop target, no Owner = Agents choice in
 the new-task form. It stays parked until scheduled automatic starts exist. For data compatibility the server is
@@ -701,7 +767,7 @@ the Plan screen does not show the tray. Tray items: automatic tasks that finishe
 | --- | --- | --- |
 | `/api/v2/plan/event` | `{event: {id?, title, day, start?, end?, area?, attention?, type?, notes?, recur?}}` | upsert (new id `evt_<8 hex>` when absent). 400 `area archived: <id>` when the event is new, or its area is being changed, to an archived area (an existing event that keeps its archived area can still be edited) |
 | `/api/v2/plan/event/delete` | `{id}` | delete |
-| `/api/v2/plan/event/move` | `{id, occurrence?, day, start?, end?}` | move (an occurrence of a recurring event = override) |
+| `/api/v2/plan/event/move` | `{id, occurrence?, day, start?, end?}` | move (an occurrence of a recurring event = override). A whole-series move onto a day that breaks the series' weekday rule is 400 (§5.3 recurrence) |
 | `/api/v2/plan/event/skip` | `{id, occurrence}` | skip one occurrence |
 | `/api/v2/plan/event/done` | `{id, occurrence?, done: bool}` | manual, optional done mark (own tracking). Single event: `done: true` stores `done: true`, `false` removes the key. Recurring event: `occurrence` required (400 if missing or not a real, unskipped occurrence), stored in a sorted `done_on: [iso, ...]` list (key removed when empty). Unknown id 404, stale base 409. No time guards (no time changes), idempotent. Answer `changed` = the event as stored |
 | `/api/v2/plan/placement/move` · `/delete` · `/add` | as v1 `/api/schedule/placement/*` | same semantics |
@@ -727,7 +793,7 @@ in one locked write. `done` / `done_on` are kept by an upsert like any other unk
 
 Answer: `{ok, version, changed: {...the object as stored...}}`. **Versions and conflicts:**
 `plan-version.json` = `{version, objects: {key: {v, sha}}}`, keys `evt:<id>`, `plc:<session>`,
-`blk:<id>`, `task:<id>`, `rv:<task_id>`. On every load, an object whose content hash changed (an
+`blk:<id>`, `dl:<id>` (deadlines, §5.3a), `task:<id>`, `rv:<task_id>`. On every load, an object whose content hash changed (an
 edit from outside: a session, a hand edit, the v1 cockpit) is bumped to `version + 1`. A write whose
 object has `v > base` → `409 {ok: false, error, current: {...}, version}`; `base` missing → 400;
 writes to other objects never conflict. **Saves:** one process-wide `threading.Lock` + an OS lock on
@@ -769,6 +835,94 @@ else the share of query words that start a title word, scaled to 60; score 0 is 
 line per match, best first: `id, score, kind (event|task), when, area, title`. Exit 0 with or without matches (no match =
 no stdout line), 2 for a bad `--day`, 1 when the Plan cannot be read. `cockpit/plan/refs.py` is the reverse lookup
 (`resolve_many(refs) -> {ref: {title, kind, day?, start?, end?}}`, read-only, never raises, unresolvable refs omitted).
+
+### 5.3a Deadlines and the Brief read (`cockpit/plan/brief.py`, `cockpit/plan/api.py`)
+
+A deadline is a date to meet or a follow-up to chase. It has no time, takes part in no collision check and never
+blocks anything. It lives in a top-level `deadlines:` list of `schedule.yaml`, written only by the plan engine
+(through the same section splice as `events:`), versioned under the key `dl:<id>` (`model.schedule_objects`
+and `SCHED_PREFIXES`), so stale-base detection (409) covers it. Every other reader of `schedule.yaml` ignores the section.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `dl_<8 hex>`; a new one is made when absent on upsert |
+| `title` | what is due |
+| `day` | `YYYY-MM-DD`: the due day (follow-up: the day to chase); for a series, the first occurrence |
+| `area` | areas.yaml id, optional; same resolution and archived rule as events (400 `area archived: <id>` for a new item) |
+| `notes` | optional text |
+| `kind` | `deadline` (default) or `follow-up` |
+| `remind_days` | int 0 to 366 (400 otherwise; clamped to 366 when read), days before the due day when the item enters "Do not miss"; default 14 for `deadline`, 0 for `follow-up` |
+| `priority` | `normal` (default) or `high` |
+| `recur` | optional `{freq: daily\|weekly\|monthly, interval?, until?, count?}`; a monthly series may also carry `weekday: mon..sun` and `week: "last"\|1..4` (that weekday in that week of the month, for example the last Saturday). The record's `day` must itself match the weekday rule (400 otherwise). A monthly rule without `weekday` is anchored on `day`, and an anchor day above 28 is 400 `can't save '<title>': monthly anchor day must be 28 or less`; that rule does not apply to weekday rules |
+| `done` | bool, single item only |
+| `done_on`, `skips` | sorted ISO days, series only; keys are the ORIGINAL occurrence days |
+| `overrides` | series only: `{original occurrence day: {day}}`, moves one occurrence |
+
+Recurrence reuses `schedmath._occurs_on`, which also implements the monthly weekday rule shared with events (§5.3); `brief.occurs_on` delegates to it.
+
+**Writes** (all `POST`, JSON, same `base`, version and 409 rules as every plan write; one locked read-modify-write each):
+
+| Path | Body (besides `base`) | Effect |
+| --- | --- | --- |
+| `/api/v2/plan/deadline` | `{deadline: {id?, title, day, area?, kind?, remind_days?, priority?, recur?, notes?}}` | upsert: merges onto the stored item, fields already stored are kept, a field sent as `null` is removed, a bad value is 400, and so is a request field outside the table above (400 `unknown field: <name>`). An `id` that does not exist is 404 |
+| `/api/v2/plan/deadline/done` | `{id, occurrence_key?}` | single: `done: true`. Series: the key is added to `done_on` (idempotent) |
+| `/api/v2/plan/deadline/move` | `{id, to_day, occurrence_key?}` | single: `day` changes. Series: `overrides[occurrence_key] = {day: to_day}` (moving back to the key itself removes the override) |
+| `/api/v2/plan/deadline/delete` | `{id, occurrence_key?}` | without the key: the item or the whole series is removed. With the key (series): that occurrence is added to `skips` |
+
+For a series, `done` and `move` require `occurrence_key` and `occurrence_key` must be a real, unskipped occurrence (400
+otherwise); sending `occurrence_key` for a one-off item is 400. `done_on`, `skips` and `overrides` are never set through
+the upsert (400). Answer `{ok, version, changed}`; unknown id 404, stale base 409, no plan file 503.
+
+**Read:** `GET /api/v2/plan/brief?day=YYYY-MM-DD` (default today; 400 on a bad day). Read-only (writes no version, no file). `version` is the stored Plan version (the value `GET /api/v2/plan` returns once outside edits are detected), the `base` a write needs.
+
+```json
+{"ok": true, "day": "2026-11-16", "version": 42,
+ "do_not_miss": [{"id": "dl_…", "occurrence_key": "2026-12-18", "day": "2026-12-18", "title": "…", "area": "admin",
+                  "kind": "deadline", "priority": "high", "days_left": 32, "days_text": "in 32 days", "overdue": false,
+                  "notes": null, "recurring": false, "group": "overdue|today|high|window"}],
+ "act": [], "act_status": {},
+ "today": [{"type": "event|block|placement", "id": "…", "occurrence": null, "title": "…", "day": "2026-11-16",
+            "start": "10:00", "end": "11:00", "area": "pers", "done": false, "can_mark_done": true}],
+ "next": [{"...same as do_not_miss": "", "group": "next", "week": "2026-11-16"}],
+ "counts": {"do_not_miss": 3, "act": 0, "today": 5, "next": 7, "overdue": 0, "deadlines_30": 7,
+            "events_today": 4, "events_done": 2, "skipped": 0}}
+```
+
+* "Do not miss" is ordered by group (overdue, due today, high priority in window, in window), then by `day`, then title.
+  An item shows once, in the first group it fits. Everything is evaluated on the displayed `day` (after overrides). A series
+  contributes at most two entries: its latest not-done occurrence displayed before today (overdue) and its next not-done
+  occurrence displayed today or later. "Window" means `day - remind_days <= today`.
+* "Next 30 days" holds the remaining not-done items displayed from tomorrow to today + 30, ordered by day, each with the
+  `week` (Monday) it falls in. A one-off item overdue stays overdue until done.
+* `today` holds every Plan block of the day, all-day items first, then by start: events (`can_mark_done: true`, `occurrence`
+  set for a recurring event, the key the `event/done` write needs), work blocks and placements (`can_mark_done: false`).
+* `counts.deadlines_30` = not-done entries of both blocks with displayed day from today to today + 30 (overdue excluded).
+  `events_today` / `events_done` count events only. `counts.skipped` counts deadline records that could not be read (a hand-edit
+  gone wrong: bad id, day or field types): they are left out, nothing else of them is shown, the rest of the Brief renders.
+  `day` outside 1970-01-01 to 9998-12-31 is 400.
+* `days_text`: "today", "in 1 day", "in N days", "1 day overdue", "N days overdue".
+* `act` and `act_status` come from the guarded gatherer `cockpit/plan/brief_act.py`, run after the plan file locks are released.
+  `act` is a list of `{source, kind, text, count, date, priority, open}` (`source` and `open` are `inbox`, `finance` or `team`;
+  `priority` `high` or `normal`; high first, then the kind order below). `act_status` is `{inbox, finance, team}`, each `ok` or
+  `unavailable`; a source is unavailable only when its database cannot be opened (or, for team, the ledger or live team state
+  cannot be read), and then contributes one line ("Inbox unavailable", "Finance unavailable", "Team unavailable"). Lines hold
+  counts, categories and dates only: no sender, subject, snippet, amount or account name. In a build without the inbox or finance
+  package that source is omitted silently (no line, no `act_status` entry).
+  Both databases are opened read-only (`mode=ro`) and nothing is fetched. Paths: `ATLAS_FINANCE_DB`, `ATLAS_INBOX_DB` (env
+  overrides; default the finance package's `finance.db` and the inbox home's `inbox.db`).
+  Kinds: inbox `act_mails`, `act_dated`, `auth_expired` (the persisted sync flag), `to_classify`; team `waiting_sessions`.
+  Private sources may add lines; the public build has none. Each kind is guarded on its own: a failing kind drops its line only.
+* Team line: "N sessions waiting: <title>, <title>, <title>" (up to 3, then "and N more"). A session counts as waiting while it has
+  stopped and its task is still open; it leaves once the task is finished, the session is archived, or 4 days after its last
+  activity (older ones are treated as orphaned). Sessions
+  working now and automatic sessions are not counted. Priority high when any waited more than 24 hours. Join: ledger task records
+  with status `open` against the live team state (working or done sessions left out); a session missing from the live state
+  has stopped.
+
+**Chat input** (`tools/plan_day.py`): ops `deadline` (add, or edit when `id` is given), `deadline-done`, `deadline-move`,
+`deadline-delete` (an id may be written `dl_xxxxxxxx@YYYY-MM-DD`, the occurrence key), and `plan_day.py deadlines` which
+lists the Brief's deadline entries. Same conventions as the other ops. Example: `{"op":"deadline","title":"Monthly review, last Saturday",
+"day":"2026-11-28","recur":{"freq":"monthly","weekday":"sat","week":"last"}}`.
 
 ### 5.4 Existing endpoints kept as they are
 
@@ -816,13 +970,14 @@ area_arg: str | None = None, playbook: str | None = None) -> str | None`.
 Writes the §1.2 events. Never reads or stores prompt text.
 
 ### 6.2 Verdict capture
+The `advisor` helper is not in `reviewers`: its output is never captured as a verdict, whatever its first line says, and it adds no rework round (§1.2).
 Helpers in this environment end with the `SubagentHandback` tool, so the final text may not be in
 `last_assistant_message`. Sources, first that yields a match wins, **one verdict per `agent_id`**
 (the hook records captured ids in state and ignores a second capture; `derive` dedupes too):
 1. PreToolUse `SubagentHandback` fired inside a reviewer (`agent_type` in `reviewers`): the first
    line of `tool_input.message`;
 2. SubagentStop of a reviewer: the first non-empty line of `last_assistant_message`;
-3. a foreground PostToolUse Agent of a reviewer: the first line of `tool_response.content[].text`.
+3. a foreground PostToolUse Agent of a reviewer that has really finished: the first line of `tool_response.content[].text`. An async acknowledgement (`tool_response.status` `async_launched`, or `isAsync`) is never a verdict, and neither is a PostToolUse while the paired agent has not ended.
 Match, case-insensitive: `^\W*(?:verdict\W*)?(READY|NEEDS[ _-]CHANGES|ESCALATE(?: TO OPERATOR)?)\b`
 (`ESCALATE TO OPERATOR` = ESCALATE). No match → no verdict (a `helper_end` only). `findings` = count of
 lines after the first that start with `-`, `*` or `<digit>.`
@@ -832,15 +987,31 @@ version}`. SubagentStart (carries `agent_id`, `agent_type`) pairs with the **old
 entry of the same helper type** (the rule `teamlive` already uses, commit cc25e80) and logs
 `helper_paired`. If the pairing is ambiguous, use the lowest pending version of that type: that can
 cause a false send-back, never a false pass. An `agent_id` already paired never claims a pending entry (a resumed
-helper logs `helper_paired` with `tuid: null` and keeps its record). "A real reviewer verdict was captured" is an explicit
+helper logs `helper_paired` with `tuid: null` and keeps its record). PostToolUse Agent releases the pending entry only when the launch has finished (no async acknowledgement, and the paired agent, if any, has ended); a background launch's pending entry stays until SubagentStart pairs it and `helper_end` clears it, whichever of PostToolUse and SubagentStart lands first. "A real reviewer verdict was captured" is an explicit
 pass condition of the record day (§6.7).
 
 ### 6.3 Rework guard
-On PreToolUse Agent with `subagent_type` in `builders`: if the current task has
-`needs_changes > budget + granted`, or `escalated` and no grant since, **refuse** with
+A consult of the `advisor` helper (since go-live, see the build log) is not a builder launch: it is never refused by this guard, also past the budget, and it is not a round.
+On PreToolUse Agent with `subagent_type` in `builders`: if the current task has, for ANY reviewer tier
+(`senior` = `senior-reviewer`, `routine` = every other reviewer; rounds are counted per tier, §1.2),
+`carried_nc + tier_rounds > budget + granted`, or `escalated` and no grant since, **refuse** with
 `"Rework budget spent for this <type> task (<n> NEEDS CHANGES, budget <b>). Stop and bring the operator the
 blockers; only the operator can grant another round with /grant-rework."` Reviewers, test-runner and scout
 are never refused by this guard. Budget `null` (quick question) never applies (the lock does).
+Rounds carried over a declaration (§1.2) count against EACH tier, so re-declaring cannot escape the budget; a grant raises the
+allowance of both tiers (`granted` is one number). The message's `<n>` is the total `nc_count` (both tiers plus carried), so
+it can exceed `budget + granted` by more than the one round that tripped a single tier. Legal work (`workflows.yaml`
+`legal`) has `budget: 1` since 2026-11-03: one free NEEDS CHANGES round per tier. Old ledger lines and states without the
+per-tier fields derive the same way by helper name. A state file written by the single-tier hook (no `nc_rounds_t`) is
+never read as "zero rounds": `load_state` rebuilds the state by replaying the session's events (`rebuild_state`, which
+reads the day files only and never calls `load_state`), so the tiers come back from the verdict lines' `helper` field and
+`builder_edits`, `ord_n`, `impl_ret` and `tr_launch` are re-derived too. If the rebuild fails, or finds another task than
+the file's, the state is migrated in place and keeps the old total: `nc_rounds_t = {routine: nc_rounds}` and `nc_at_t`
+set to `nc_at` for both tiers, so a tripped task stays tripped. The migration has a second caller: the light transaction
+of the publish gate's allowed path (`Txn(light=True)`), the only grant-consuming light transaction that saves the state, so it
+never reads an old file as zero rounds. The other light transactions (`Txn(light=True, migrate=False)`) never save: the
+refusal logs of both gates (they read `state.get("task")`) and the config gate's allowed path (it only reads the grant and
+sets `nosave`). They skip the migration, so no ledger replay runs under the hook timeout.
 While the guard is tripped, the **main session's** own non-exempt Edit/Write/NotebookEdit on that task
 is refused too (the orchestrator can't make the fixes itself past the budget). Helpers' edits and shell commands are
 never refused by this guard (no file lock, no recall, no shell guard). Carry-over and abandon: §1.2.
@@ -957,6 +1128,28 @@ denied plain mentions.)* Mere mentions and folder paths pass. **Required test, z
 `git add hooks/skills/grant-rework/SKILL.md`, `git commit -m "add /grant-rework skill"`,
 `grep -n "/grant-rework" docs`. The launcher (§7) refuses a brief with a line starting `/grant-rework`, `/ack-break`, `/allow-publish` or `/allow-config`.
 The skill body tells the orchestrator: The operator granted n more round(s); continue the task.
+
+**Union of readings (2026-11-03).** Bash and PowerShell read quotes, `#` comments and typographic quotes differently, so one
+reading of a multi-line command can hide a launch behind a quote the other shell does not see. `claude_shell_launch` and
+`forged_grant_name` are therefore wrappers over main's own functions (`_claude_shell_launch_one`, `_forged_grant_name_one`).
+Reading A is main's pipeline, unchanged (newline join, normalise, segment split, judgement, and `CLAUDE_CMD_RE` exactly as on
+main), so on every input it answers as main does. Extra readings run only on a trigger. Quoting readings B to E run when the
+raw text holds a risky trigger: a `#` outside quotes (a plain scan of `'` and `"`; a `#` inside a quoted string, as in
+`git commit -m "x # y"`, is text and not a trigger), any typographic quote (U+2018 to U+201E: `‘ ’ ‚ ‛ “ ” „`), `$'`, a backslash
+right before a quote, or an odd count of `'` or `"`. They are B (the raw text, no newline join), C (the typographic quotes
+mapped to ASCII, full pipeline, so the single-quote exemption of `$(` cannot hide behind a curly quote) and D (C without the
+join) and E (the raw and the mapped text with the join forced: main's join leaves the text alone after a backslash before a
+quote or `$'`, E reads that backslash as plain text so a launch after the closing quote is seen). Reading F runs when the
+text holds any `!` (no quoting trigger needed): the text with every `!` replaced by a space, main's join, through the same
+two functions (and the mapped text with `!` replaced, when the typographic-quote trigger fires), which closes
+`git -c alias.z="!claude -p y" z`. A command is a launch when any reading says so; the forged-grant name is the first one
+found over A, then the extra readings in order.
+Size cap: over `PUBLISH_MAX_CHARS` characters only reading A runs, so a huge input answers as main does with main's timing. Fail closed: the extra-readings loop (and only it) is wrapped in `try/except Exception`; `claude_shell_launch` returns True when an extra reading raises, `forged_grant_name` returns the sentinel name `a user-only command` (A's name, when found, is returned before any extra reading), so the hook entry denies through the forged branch ("Only the operator can run a user-only command, by typing it.") even when launch detection says False. A is outside any try, so its behaviour, exceptions included, is main's.
+Deny-more-only property: the wrappers never read a text more leniently than main, so for every input a denial by main is a
+denial here (same for a forged-grant name). `--help`, `--version` stay exempt (`!claude --help` is not a launch).
+The property is checked against a frozen copy of main's hook (not part of this copy)
+on every string case of `test_config_gate_r3`, `r5` and `r6` and the follow-up and probe cases, and that each known gap is
+closed, also end to end. Known false positives (a quoted mention such as `echo "a && claude -p x"`) stay as on main.
 
 ### 6.4a `/ack-break <break id>` (2026-10-10)
 A user-only skill, mirror of `/grant-rework`: `hooks/skills/ack-break/SKILL.md` with `disable-model-invocation: true`,
@@ -1315,6 +1508,7 @@ handed a user-only command. The ledger, the
 hash chain and the outside anchor remain the other layers, and the Ledger shows the allowed changes.
 
 ### 6.5 The done-lock
+A consult of the `advisor` helper is no check: it never marks changes as checked and never satisfies the lock.
 * **Version:** each task has `version`, +1 on every non-exempt `edit`. Exempt paths: anything under
   `~\.claude\` (memory, plans; its config files are not exempt, see the end of this bullet), the session's scratchpad / the system
   temp dir, `<data>\`, and files whose name ends in `build-log.md` or `.notes.md`, and scratch files: a name that starts with `scratch-` and ends in `.md`, a name that ends in
@@ -1396,7 +1590,30 @@ never blocks, in both modes; no ledger event is written and no text is stored. A
 The reminder applies when: the type's crew (`workflows.yaml`) includes a builder; the type is `undeclared` (its real
 type is unknown); the type is a playbook whose `playbook_crews` entry includes a builder, or that playbook is not
 listed there. It is also assumed to apply when the type is not listed in `workflows.yaml`, `workflows.yaml` is
-unreadable, or a crew is not a list (malformed).
+unreadable, or a crew is not a list (malformed). A Claude memory file (any path under `~/.claude/projects/<project>/memory/`)
+is never a counted edit: it is exempt from this reminder's count and from the stop below.
+
+**The 6-edit stop (since 2026-11-03).** The reminder above is unchanged. State adds `builder_edits`: the main-session
+edits on the task since the last `implementer` or `drafter` launch (counted exactly like `main_edits`, so the same
+exemptions and the memory exemption apply). It is 0 when the task opens and is reset to 0 by every `helper_start` of
+`implementer` or `drafter` on that task. On PreToolUse Edit/Write/NotebookEdit by the MAIN session (no `agent_id`), when the
+task is open, `builder_edits >= 6` and the type's crew can reset it: the crew (or the playbook's `playbook_crews` entry) includes
+`implementer` or `drafter`, the helpers whose launch resets the counter (a `researcher` or `sweeper` is a builder for the reminder but
+cannot reset the stop, so a research-only crew is never stopped; an `undeclared` task is stopped (its type is unknown); the reminder is unchanged), the hook calls `refuse()` with guard `edit_limit`: record mode logs `refusal {guard: "edit_limit", would: true}`
+and allows, enforce mode denies. Reason (one line): "Main-session edit limit reached on this task (6 since the last
+builder): hand the rest to implementer or drafter." Helpers' edits are never refused by it. Any error in the check is
+swallowed (fails open). It is checked after the quick-question and rework guards. Opening a new task (re-declaring with `: team-type`) resets the counter by design, because the abandoned task shows on the Ledger.
+
+### 6.9a Test-runner reminder before a review (since 2026-11-03)
+On PreToolUse Agent in the main session launching a reviewer (`reviewer` or `senior-reviewer`) for a task of type `coding`:
+if an `implementer` has returned on this task (`helper_end`) and no `test-runner` was launched after that return, the hook
+adds one line to `hookSpecificOutput.additionalContext` of that PreToolUse answer (the same channel as §6.3a; it never
+changes the permission decision, so it is never a deny): "Reminder: an implementer returned on this task and no
+test-runner has run since. Run the full suite with test-runner before the review." State: `ord_n` (a monotonic counter
+bumped by every `helper_start` and `helper_end`, so the order never depends on list order), `impl_ret` (`ord_n` at the last
+`implementer` `helper_end` of the task, null before) and `tr_launch` (`ord_n` at the last `test-runner` `helper_start` of the
+task, 0 before); both reset when a task opens. The reminder fires when `impl_ret` is set and `tr_launch <= impl_ret`. No
+ledger event is written; any error is swallowed (fails open).
 
 ---
 
@@ -1428,8 +1645,8 @@ cockpit/web2/
 ```
 
 ### 8.1 Shell contract
-* **Routes:** `#/plan` (default), `#/team`, `#/ledger`. Shortcuts `p t l`
-  (ignored while typing in a field). Nav order: Plan, Team, Ledger.
+* **Routes:** `#/brief` (default), `#/plan`, `#/team`, `#/ledger`. Shortcuts `b p t l`
+  (ignored while typing in a field). Nav order: Brief, Plan, Team, Ledger.
 * **A screen module** default-exports `{id, title, key, mount(root, ctx), unmount()}`.
   `ctx = {api: {get(path), post(path, body)}, areas: [...], areaColor(id), every(ms, fn) /* poll,
   auto-cancelled on unmount */, kit, ui}`. A screen owns only its root element and its own CSS file
@@ -1480,7 +1697,7 @@ No native `<select>`, checkbox, radio, date or time picker anywhere. Exports: `s
 value, onInput})` (text input, themed).
 
 ### 8.4 Team screen
-The creatures are **copied verbatim** from `cockpit/web/team.html` (tables `T`, `G`, `SHAPE`,
+The creature of the `advisor` helper (the compass star, tier `fable`, flat colour `--m-fable`) is ADDED after the verbatim block in its own marked block (`/* creatures: added after v1 */`); the v1 entries are never altered. The creatures are **copied verbatim** from `cockpit/web/team.html` (tables `T`, `G`, `SHAPE`,
 `ORDER`, functions `creature`, `human`, `art`, the strip/lane markup and the CSS keyframes) into
 `screens/team-creatures.js` + `team.css`: same shapes, gradients, motion and phase. Only the text,
 timeline and layout around them follow B (the timeline uses `timelineLanes` with model-tier colours
@@ -1489,9 +1706,11 @@ as in the chart kit's "Team · today" example, flat `--m-*` colours that match t
 and it resolves, the row shows that item's title instead (`plan_title`, e.g. "Product: open weekly report"; each
 session in `GET /api/v2/team` carries `plan_ref` and `plan_title`, both null when none); timeline rows carry `{sid, label, type, cost, segs}`. A session working only because of helpers (`via_helpers`, §5.1) shows a line "working · N helper(s) in the background" with the helper names and labels instead of reading idle. Data: `GET /api/v2/team` every 2 s, repaint only when the JSON changed. Under the strip, a collapsed-by-default "Roster" section (`team-roster.js`, open state in localStorage) loads `GET /api/v2/shell/roster` on first open and shows helpers, types of work and playbooks as hairline tables. The orchestrator row in the helpers table (columns Name, Model, Use it for, Never) is a fixed client-side row (the main session has no agent file).
 
+**Lane layout (changed by the operator on 2026-11-16, regrouped the same day).** The sequential `steps` creature chain in the lanes is replaced by a chart of helper runs (`screens/team-graph.js`, pure `graphHtml(session, nowH, {plotW, folds})`, so this part of the lane markup is no longer the v1 copy; the creatures themselves are still the verbatim art). The lane header (title, type, area chip, tag, since and cost, the via-helpers line) stays. Below it the chart has a LEFT column (420px) and one SVG on a shared time axis on the RIGHT (tick step by window size: 5 min up to 45 min, 10 min up to 1.5 h, 15 min up to 2.5 h, 30 min up to 5 h, else hourly; the full axis runs from the first run floored to 5 minutes to the end ceiled to 5 minutes; a tick label closer than about 40px to the left edge or 4% to the right edge is left out). Left and right rows share fixed heights: orchestrator 32px, group header 30px (46px with the name wrapped to two lines when the group is open and its name is longer than 28 characters; folded headers stay one line with the full name in `title`), run row 24px, one line each. Rows: (1) the orchestrator lifeline on top (creature, "Orchestrator"); (2) one GROUP per task (`tasks[]`, `helpers[].task`, §5.1), each a header row with a themed chevron button (`.tg-gt`, `aria-expanded`, fold toggle), the group name, a type chip (only when the group's type differs from the session's type or declared tag), "N runs" with the time range ("10:12-11:40", "10:12-now" while running), and in the timeline column a thin span bar from the group's first start to its last stop (or now) with the task's final verdict chip (READY `--ok`, NEEDS CHANGES `--warn`, ESCALATE `--crit`, none when null); the group name is the linked Plan item's title (`plan_title`), else the brief label of the first builder run (implementer, drafter, researcher), else the first run's label, else the type; the null-task group is "Other helper runs"; (3) inside an open group one row per helper TYPE (same-type runs merge): creature (animated when any run of that type in the group is running, still and dimmed otherwise), then two FIXED columns so the brief text starts at the same x on every run row: a name cell of fixed width (210px, ellipsis and full text in `title` beyond) holding "implementer #1, #2" (instance numbers per type; "#1-#4" past three) plus the muted "(N rounds)" when N is above 1 and "resumed" when any run was resumed, and the brief cell with the latest run's brief label clipped with an ellipsis (full text in `title`); on the right every run of that type as a bar coloured by the model tier (`--m-opus|sonnet|haiku|fable`), a row with one run shows that run's verdict chip, a merged row (more than one run of the type) shows one chip after the last finished bar with the verdicts in start order joined by an arrow (" → "), for example "NC → NC → NC → R", coloured as the last verdict, and the same chip codes on the group header span bar (changed 2026-11-16, user request: READY is "R", NEEDS CHANGES is "NC", ESCALATE is "ESC"; the full words are in the chip's `title` and `aria-label`; a chip is ALWAYS placed to the right of the bar end, never flipped left, and when it passes the plot's right edge at the current zoom the plot clips it), and running runs get no chip; runs of one type that overlap in time share the row and are drawn at half height on stacked lanes. There are NO arrows (no launch or return lines, no markers, no legend): a bar's start and end already show the hand-off. Folding: a group with a running helper, else the most recent group, is open by default; the others show only their header. The operator's toggles are kept in memory per (session, task) across polls and replace the default. A running bar is open-ended to now and marked "running" in full: the label sits right of the bar end when it fits inside the plot width, else inside the bar end, else left of the bar start; the plot width is estimated at paint from the lane width and re-measured by `updateNow` on every poll. Hovering a row (left label or bar) lightly highlights it and dims the other bars (one delegated listener, `setHot`). More than the cap (200) show "Showing the latest 200 of N runs." The chart sits in a `tscroll` with `data-keep-scroll`. A group name (`.gn`) of a group with a running helper gets the class `live` (folded or open): its colour pulses every 1 s between `--ink` and `--accent`, steady `--accent` under reduced motion; the class is part of the repaint signature through `helpers`, so the animation starts and stops with the runs and is not restarted by a poll. **Zoom and pan (2026-11-16, user request).** Each session chart has its own view window `[t0, t1]` (hours), kept in memory per sid across polls and repaints. Default: a working session shows the last 2 h and the next hour around now, a stopped session the same around its last activity (rounded up to 5 minutes), a session shorter than 3 h its whole span; views are clamped to the session axis plus 1 h each side (inside the day), with a minimum window of 10 minutes. The mouse wheel over the plot (only there; the page scrolls elsewhere) zooms: wheel up in, wheel down out, anchored at the time under the pointer. A themed horizontal bar under the plot (track and draggable thumb, thumb width = window / range, a click on the track centres the window there; hidden when the whole range is shown) pans, and so does dragging the plot itself. "Reset view" (shown only after a manual change) or a double click on the plot returns to the default window. While the view is default it follows now; after a manual zoom or pan it stays put until reset. Ticks are recomputed for the window, bars are clipped to it (a bar partly outside shows its visible part, one wholly outside is omitted), and zoom and pan redraw only the lane's SVG, scroll bar and reset button (`repaintPlot`, requestAnimationFrame-throttled), so the creatures do not restart. The thumb is a focusable `role="scrollbar"` (`tabindex="0"`, `aria-label="Time window"`, `aria-valuemin` 0, `aria-valuemax` = latest window start in minutes from the axis start, `aria-valuenow` = window start in the same minutes, `aria-valuetext` "HH:MM to HH:MM"); with focus on it ArrowLeft/ArrowRight pan by 10 % of the window, Home/End go to the bounds, + and - zoom around the window centre, Escape or 0 reset the view (`keyView`; only those keys are consumed). A lane is repainted only when its own data changed (the signature holds `helpers`, `tasks`, the fold state, the plot-width bucket and, until the view is set by hand, the default window in 5-minute steps, not the clock); the running bars, group spans and the working lifeline move to now in place (`updateNow`), so the creatures keep animating. Sessions that stopped today (idle, waiting or done one-liners) with at least one helper run get a themed disclosure button "Show how it ran" / "Hide" (same pattern as the Roster toggle; open state kept in memory per session across polls) that expands the same chart under the row. Today's sessions only. The "Today" timeline card, the creature strip and the roster are unchanged.
+
 ### 8.4a Plan screen: the operator's time only (2026-10-10)
 `screens/plan*.js`. The week view is seven day columns of the operator's time (events, read-only project placements,
-scheduled reviews); the day view is a single "Calendar" lane. There is no agents column, no "Agents · lane N" rows, no
+scheduled reviews); there is no day view. There is no agents column, no "Agents · lane N" rows, no
 agents drop target and no Owner choice in the new-task form (new tasks are `owner: me`). Since 2026-10-11 the screen does
 not create events on empty time (events and task slots are planned from a session with `tools/plan_day.py`, §5.3); existing events drag, resize and open for edit.
 *(2026-10-15)* The Review tray and the "Tasks per area" board are gone from the screen (the tray is parked on the server, §5.3). In their place the right
@@ -1499,7 +1718,7 @@ column (same sticky 300 px column, stacked under the calendar below 1100 px) hol
 Drag one onto the calendar, or plan it from a session.", a quick add (title, area, estimate stepper, "Add" with its disabled reason shown as text;
 posts `task` as `owner: me`, `state: todo`), then the list. A memo is a `tasks.yaml` task (project `plan.yaml` tasks are not shown) whose state is not `done` and whose
 linked event is not done (`planned.done`); open memos first, then scheduled ones, each in payload order. A row shows the area colour dot and short tag, the title,
-the estimate (`1h`, `30m`) and a "Remove" text button (`task/state` to `done`). An open memo drags onto the week or day calendar (`task/place`, start snapped
+the estimate (`1h`, `30m`) and a "Remove" text button (`task/state` to `done`). An open memo drags onto the week calendar (`task/place`, start snapped
 like event drags, optimistic with undo and the server's reason as visible text on a refusal). A scheduled memo (`planned.on == "me"`) stays in the list at reduced opacity,
 shows `planned <Ddd DD> HH:MM` instead of the estimate and can be dragged again, which moves its linked event. It leaves the list when its event is marked done or
 its state is `done`; deleting the event makes it open again. The app bar no longer shows the pending-review chip (`/api/v2/attention` still carries `pending_reviews`, §5.1).
@@ -1525,7 +1744,8 @@ warning token, info = muted); notes follow below the facts, muted and labelled a
 command text is not shown anywhere (it is not stored). Model colours
 are `--m-*` everywhere (charts and legends).
 *(2026-10-11, readability.)* The task table reads at a glance: the name is `title` (session title as a muted second
-line when different); the column "Rework rounds" shows "{own} of {budget}" (budget null = "no budget"), plus
+line when different); the column "Rework rounds" shows "{used} of {budget}" (`rounds.used`; budget null = "no budget"), then
+", senior N" when `rounds.own_senior` > 0 (example: routine 2 + senior 1 on budget 2 reads "2 of 2, senior 1"), plus
 " +N granted" and a muted second line "N carried over"; statuses read in plain words (open = in progress, done = closed,
 ended = session ended, switched = next task started, abandoned = abandoned with open findings); a READY task never also reads "Refused, over budget". Crew and
 helper names on this screen are the roster names (`rosterName` in `kit/format.js`: chief = orchestrator, the eight agent
@@ -1534,6 +1754,28 @@ the persona names are gone (the creature artwork and its internal keys are uncha
 the two KPIs "Caught by the checks" and "Weighted usage" carry a muted subtitle. Bypass paths show with single forward slashes.
 
 ---
+
+### 8.6 Brief screen
+Route `#/brief`, key `b`, the screen shown on open. Files: `screens/brief.js` (screen), `brief-model.js` (pure text and
+markup rules, tested by `cockpit/test_web2_brief.mjs`), `brief.css` (selectors `.brief-`, tokens only).
+* **Data:** `GET /api/v2/plan/brief?day=<today>` (§5.3a), polled every 60 s with `ctx.every`; the page repaints only
+  when the JSON changed (scroll kept). The write `base` is the answer's own `version`. After any write the screen reloads at once.
+* **Layout:** header (eyebrow, the day as `Tuesday 17 November`, summary line), then the cards Do not miss, To act on,
+  Today, Next 30 days. Summary line: `N to watch · N to act on · N blocks today · N of M events done · N deadlines in 30 days`
+  (counts of the answer; the events part is left out when the day has no event). Area colour square from `ctx.areaColor`.
+  Days-left text comes from `days_text`; overdue uses `--crit`, 7 days or fewer `--warn`. Do not miss shows at most 8 rows,
+  then `and N more`, which expands in place. Next 30 days is grouped by `week` (`Week of 23 Nov`; `Later` when absent).
+  Empty states: `Nothing due. Nothing to chase.`, `Nothing to act on.`, `No blocks today.`, `No deadlines in the next 30 days.`
+  A note says the mail lines reflect the last background sync (every 15 minutes).
+* **Actions:** deadline items: `Done` (`deadline/done`), `Snooze` (menu `+1 day`, `+3 days`, `+1 week`, counted from the
+  item's displayed day when that is today or later, from today when it is overdue, and `Pick a day`, a themed day stepper plus a Move button; all post `deadline/move` with `to_day`),
+  `Open in Plan` (`#/plan?day=<item day>`). A series item sends its `occurrence_key`; a one-off sends none. Today events
+  with `can_mark_done`: a `Done` / `Undo` toggle posting `event/done` (`occurrence` for a recurring event); done rows are ticked
+  and dimmed. Placements and work blocks have no toggle. Each `To act on` line has `Open Inbox`, `Open Finance` or `Open Team`
+  (navigates to that screen); no names, subjects or amounts are shown.
+* **Refused writes:** a 409 reloads and shows a dismissible notice (`Changed elsewhere: reloaded.`); any other refusal shows the
+  server's reason as visible text under the item.
+* **Plan hook:** the Plan screen reads an optional `day=YYYY-MM-DD` from its hash query (`#/plan?day=...`) and opens on that week.
 
 ## 9. Wave 0 seam and stubs (written by the orchestrator before the lanes start)
 

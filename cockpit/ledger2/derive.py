@@ -79,6 +79,11 @@ def _active_secs(started, end, times: list, helpers: list) -> int:
     return int(total)
 
 
+def _tier(helper) -> str:
+    """The rework tier of a reviewer: senior-reviewer is `senior`, every other reviewer `routine`."""
+    return "senior" if str(helper or "").strip().lower() == "senior-reviewer" else "routine"
+
+
 def _new_task(e: dict, wf: dict, prev: dict | None) -> dict:
     typ = "playbook" if e["ev"] == "playbook" else (e.get("type") or "undeclared")
     info = type_info(wf, typ)
@@ -88,7 +93,7 @@ def _new_task(e: dict, wf: dict, prev: dict | None) -> dict:
         "plan_ref": e.get("plan_ref"), "plan_auto": bool(e.get("plan_auto")),
         "auto": False, "started": e.get("t"), "ended": None, "duration_s": 0, "span_s": 0, "status": "open",
         "_times": [], "_hiv": [],
-        "_budget": info["budget"], "_nc": set(), "_nc_n": 0, "_esc": False, "_granted": 0,
+        "_budget": info["budget"], "_nc": set(), "_nc_n": 0, "_nc_t": {"routine": 0, "senior": 0}, "_esc": False, "_granted": 0,
         "_carried": 0, "_nc_at": 0, "_vseq": None, "_version": 0, "_lv": -1, "_other_v": -1, "_edits": 0, "_needs_check": info["needs_check"],
         "helpers": OrderedDict(), "verdicts": [], "_seen_agents": set(), "refusals": [],
         "caught": 0, "summary": None,
@@ -121,8 +126,8 @@ def _own_title(t: dict) -> str | None:
     goal = (t["summary"] or {}).get("goal") if t["summary"] else None
     if goal:
         return goal
-    for v in t["helpers"].values():
-        if v["labels"]:
+    for h, v in t["helpers"].items():
+        if h != "advisor" and v["labels"]:          # an advisor label ("scope: ...") describes the consult, not the task
             return v["labels"][0]
     return t["session_title"] or None
 
@@ -134,7 +139,9 @@ def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
     t["duration_s"] = _active_secs(t["started"], rec_end, t["_times"], t["_hiv"])
     budget = t["_budget"]
     nc = t["_carried"] + t["_nc_n"]
-    left = None if budget is None else max(0, budget + t["_granted"] - nc)
+    top = max(t["_nc_t"].values())                      # the busiest tier's own rounds (contracts §6.3)
+    used = t["_carried"] + top
+    left = None if budget is None else max(0, budget + t["_granted"] - used)
     verdicts = t["verdicts"]
     real = [x for x in verdicts if not x.get("late")]
     final = real[-1]["verdict"] if real else None
@@ -149,7 +156,8 @@ def _finish(t: dict, last_t: str | None, wf: dict) -> dict:
         "started": t["started"], "ended": ended, "duration_s": t["duration_s"], "span_s": t["span_s"], "status": t["status"],
         "crew": list(t["helpers"].keys()), "helpers": helpers,
         "rounds": {"needs_changes": nc, "budget": budget, "granted": t["_granted"], "left": left,
-                   "own": t["_nc_n"], "carried": t["_carried"]},
+                   "own": t["_nc_n"], "carried": t["_carried"],
+                   "own_routine": t["_nc_t"]["routine"], "own_senior": t["_nc_t"]["senior"], "used": used},
         "verdicts": verdicts, "final_verdict": final, "checked": checked,
         "unverified_flag": bool(unverified), "caught": t["caught"], "edits": t["_edits"],
         "refusals": t["refusals"], "cost": t["cost"], "summary": t["summary"],
@@ -318,12 +326,15 @@ def _derive_session(sid: str, evs: list[dict], wf: dict, markers: set[str]) -> l
                     target["_esc"] = True
             elif v == "NEEDS_CHANGES":
                 if "round" in e:                # the hook's own decision (contracts §1.2)
-                    tk["_nc_n"] += 1 if e["round"] else 0
+                    if e["round"]:
+                        tk["_nc_n"] += 1
+                        tk["_nc_t"][_tier(e.get("helper"))] += 1
                 else:                           # legacy verdict: one round per distinct failing version
                     key = ver if ver is not None else "?" + str(aid)
                     if key not in tk["_nc"]:
                         tk["_nc"].add(key)
                         tk["_nc_n"] += 1
+                        tk["_nc_t"][_tier(e.get("helper"))] += 1
                 tk["_nc_at"] = spawn_n
             if v == "READY":
                 if ver is not None:            # unknown version never counts as a check

@@ -383,6 +383,9 @@ def schedule_objects(sched: dict) -> dict:
     for b in sched.get("work_blocks") or []:
         if isinstance(b, dict) and b.get("id"):
             out[f"blk:{b['id']}"] = b
+    for d in sched.get("deadlines") or []:
+        if isinstance(d, dict) and d.get("id"):
+            out[f"dl:{d['id']}"] = d
     return out
 
 

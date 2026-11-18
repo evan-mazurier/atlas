@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 SOURCES = sorted(p for p in WEB2.rglob("*") if p.is_file() and p.suffix in {".js", ".css", ".html"})
 HEX = re.compile(r"#[0-9a-fA-F]{8}\b|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{4}\b|#[0-9a-fA-F]{3}\b")
 CREATURES = re.compile(r"/\* creatures: verbatim from v1 \*/.*?/\* end creatures \*/", re.S)
+ADDED_CREATURES = re.compile(r"/\* creatures: added after v1.*?/\* end added creatures \*/", re.S)
 CREATURE_FILES = {"team-creatures.js", "team.css"}
 
 
@@ -34,7 +35,7 @@ def test_there_is_something_to_check():
 
 
 def strip_creatures(p: Path, text: str) -> str:
-    return CREATURES.sub("", text) if p.name in CREATURE_FILES else text
+    return ADDED_CREATURES.sub("", CREATURES.sub("", text)) if p.name in CREATURE_FILES else text
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.relative_to(WEB2).as_posix())

@@ -62,6 +62,48 @@ def _hhmm_or_none(v) -> str | None:
     return s if _HHMM_RE.match(s) else None
 
 
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def weekday_match(day: dt.date, recur: dict) -> bool:
+    """Whether `day` is the weekday of the month rule `recur` (weekday + week), ignoring interval/until/count."""
+    wd = recur.get("weekday")
+    if wd not in WEEKDAYS or day.weekday() != WEEKDAYS.index(wd):
+        return False
+    week = recur.get("week")
+    if week == "last":
+        return (day + dt.timedelta(days=7)).month != day.month
+    return isinstance(week, int) and not isinstance(week, bool) and (day.day - 1) // 7 + 1 == week
+
+
+def _weekday_rule_occurs_on(day0: dt.date, recur: dict, target: dt.date) -> bool:
+    """Monthly weekday rule (`weekday` + `week`: e.g. last Saturday): the anchor day-of-month is not used."""
+    if target < day0 or not weekday_match(target, recur):
+        return False
+    until = None
+    if recur.get("until"):
+        try:
+            until = dt.date.fromisoformat(str(recur["until"]))
+        except (ValueError, TypeError):
+            until = None
+    if until is not None and target > until:
+        return False
+    try:
+        interval = max(1, int(recur.get("interval") or 1))
+    except (TypeError, ValueError):
+        interval = 1
+    months = (target.year - day0.year) * 12 + (target.month - day0.month)
+    if months % interval:
+        return False
+    count = None
+    if recur.get("count") is not None:
+        try:
+            count = int(recur["count"])
+        except (TypeError, ValueError):
+            count = None
+    return count is None or months // interval < count
+
+
 def _occurs_on(day0: dt.date, recur: dict | None, target: dt.date) -> bool:
     """Whether an event anchored at `day0` with recurrence `recur` has an occurrence
     exactly on `target`. Mirrors cockpit/state.py's `_expand_recurrence` semantics
@@ -72,6 +114,8 @@ def _occurs_on(day0: dt.date, recur: dict | None, target: dt.date) -> bool:
     freq = (recur or {}).get("freq") if isinstance(recur, dict) else None
     if freq not in ("daily", "weekly", "monthly"):
         return target == day0
+    if freq == "monthly" and recur.get("weekday"):
+        return _weekday_rule_occurs_on(day0, recur, target)
     try:
         interval = max(1, int(recur.get("interval") or 1))
     except (TypeError, ValueError):

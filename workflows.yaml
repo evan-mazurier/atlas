@@ -30,7 +30,7 @@ types:
   legal:
     label: Legal or money
     crew: [researcher, drafter, senior-reviewer]
-    budget: 0
+    budget: 1               # per reviewer tier (senior, routine): one free NEEDS CHANGES round each
     rung: "1.5"
     needs_check: true
     move: "Never moves: always decided by hand"

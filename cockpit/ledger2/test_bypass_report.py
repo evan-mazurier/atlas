@@ -343,3 +343,18 @@ def test_a_task_that_ended_ready_does_not_pass_its_count_on():
     idx = len(evs) - 1
     ctx = br.build_report(evs[idx], evs, idx, wf(), None)["context"]
     assert "0 of 2 rework used" in ctx
+
+
+def test_over_budget_sentence_uses_the_true_total_across_tiers():
+    evs = base_events()
+    n = 0
+    for helper, count in (("reviewer", 2), ("senior-reviewer", 1)):
+        for _ in range(count):
+            n += 1
+            evs.append({"t": t(-10 + n), "ev": "verdict", "sid": "s", "task": "s-1", "agent_id": "r%d" % n,
+                        "helper": helper, "verdict": "NEEDS_CHANGES", "version": n, "findings": 1})
+    evs.append(attempt(0, mode="record"))
+    ctx = report(evs)["context"]
+    budget = (wf().get("types") or {}).get("chore", {}).get("budget")
+    assert budget == 1
+    assert f"3 review rounds asked for changes on this task (budget {budget}; rounds beyond it were logged, not enforced)." in ctx

@@ -119,11 +119,12 @@ def collect(days: int = 7) -> dict:
 #   Haiku 5.5   $0.10 / $0.50 for prompts up to 100k tokens  -> 0.05
 #               $0.50 / $2.50 above 100k                      -> 0.25
 #   Haiku 4.5   $1 / $5           -> 0.5
+#   Fable 5.2   $8 / $40          -> 4.0   (price read 2026-11-13, not verifiable from this repo)
 # `ATLAS_MODEL_WEIGHTS="haiku-5=0.05,opus=2"` overrides: each pair replaces the flat weight for
 # that pattern (no Haiku 5.5 tier then), unknown patterns are added and checked before the defaults.
 HAIKU5_TIER_PROMPT = 100_000
 _DEFAULT_WEIGHTS: tuple[tuple[str, float], ...] = (
-    ("haiku-5", 0.05), ("haiku", 0.5), ("opus", 2.0), ("sonnet", 1.0))
+    ("haiku-5", 0.05), ("haiku", 0.5), ("opus", 2.0), ("sonnet", 1.0), ("fable", 4.0))
 
 
 def _env_weights() -> list[tuple[str, float]]:

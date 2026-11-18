@@ -36,7 +36,7 @@ from ledger2 import query, stats, store  # noqa: E402
 LABEL_MAX = 50
 ANCHOR_HOUR = 21
 DEFAULT_SERVER_URL = "http://127.0.0.1:8765/api/v2/areas"
-GUARDS = ("rework", "publish", "config", "done_lock", "quick_question", "declare")
+GUARDS = ("rework", "publish", "config", "done_lock", "quick_question", "declare", "edit_limit")
 ORDER = {"red": 0, "amber": 1, "green": 2}
 
 
@@ -206,7 +206,7 @@ def check_refusals(events: list[dict]) -> list[dict]:
     for g in ("rework", "done_lock"):
         if c[g]:
             out.append(_line(f"Refusals: {g}", "amber", f"{c[g]} on the day"))
-    info = [f"{g} {c[g]}" for g in ("publish", "config", "quick_question", "declare") if c[g]]
+    info = [f"{g} {c[g]}" for g in ("publish", "config", "edit_limit", "quick_question", "declare") if c[g]]
     if c["_would"]:
         info.append(f"would-have (record mode) {c['_would']}")
     if info:

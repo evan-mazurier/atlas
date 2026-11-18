@@ -71,7 +71,7 @@ def test_area_resolver_edge_cases():
 def test_load_areas_equals_yaml_safe_load():
     import yaml
     from ledger2 import areas as la
-    path = shell_api.ROOT / "areas.yaml"
+    path = ROOT / "cockpit" / "ledger2" / "fixtures" / "areas.yaml"     # test-owned, never the live areas.yaml
     want = [a for a in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("areas") or []
             if isinstance(a, dict) and a.get("id")]
     assert la.load_areas(str(path)) == want
@@ -306,3 +306,125 @@ def test_team_table_escaped_pipe_and_string_crew(monkeypatch, tmp_path):
     _, d = shell_api.get("/api/v2/shell/roster", {})
     assert d["helpers"][0]["use_for"] == "Reads a | b" and d["helpers"][0]["never"] == "Edits | deletes"
     assert d["types"][0]["crew"] == ["implementer"]
+
+
+def test_use_for_strips_the_fable_tier_prefix_like_the_others():
+    from shell_api import _use_for
+    assert _use_for("Advisor (Fable). Second opinion at a hard decision point. Never reviews.") == "Second opinion at a hard decision point."
+    assert _use_for("Scout (Haiku). Finds things. Never edits.") == "Finds things."
+
+
+# ---- verdict join for the Team chart ------------------------------------------------------------------
+def _chart_snap():
+    h = lambda aid, ty: {"agent_id": aid, "agent": ty, "type": "x", "n": 1, "label": "", "bg": False, "start": "11:00", "stop": "11:05",
+                         "start_h": 11.0, "stop_h": 11.08, "running": False, "resumed": False, "verdict": None}
+    return {"ok": True, "now": "2026-10-09T12:00:00", "working": 0, "counts": {}, "active": 0, "cost": 0,
+            "timeline": {"start": 8, "end": 20, "rows": []},
+            "sessions": [{"sid": "w", "title": "T", "project": "p", "type": "Coding", "status": "idle", "waiting": False,
+                          "cwd": "E:/x", "helpers": [h("r1", "inspector"), h("r2", "inspector"), h("b1", "builder")],
+                          "helpers_total": 3, "span": {"start_h": 11.0, "end_h": 12.0}}]}
+
+
+def test_team_payload_fills_verdicts_from_todays_ledger(monkeypatch, tmp_path):
+    led = tmp_path / "ledger"
+    led.mkdir()
+    rows = [{"ev": "verdict", "agent_id": "r1", "verdict": "NEEDS_CHANGES"}, {"ev": "verdict", "agent_id": "r1", "verdict": "READY"},
+            {"ev": "verdict", "agent_id": "r2", "verdict": "NEEDS_CHANGES"}, {"ev": "helper_end", "agent_id": "b1"}]
+    (led / "events-2026-10-09.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_LEDGER2_DIR", str(led))
+    monkeypatch.setattr(shell_api, "_snapshot", _chart_snap)
+    monkeypatch.setitem(shell_api._verdict_cache, "key", None)
+    hs = shell_api.get("/api/v2/team", {})[1]["sessions"][0]["helpers"]
+    assert [h["verdict"] for h in hs] == ["READY", "NEEDS_CHANGES", None]       # the last verdict of a run wins
+
+
+def test_team_payload_verdict_join_failure_leaves_null(monkeypatch, tmp_path):
+    monkeypatch.setenv("ATLAS_LEDGER2_DIR", str(tmp_path / "missing"))
+    monkeypatch.setattr(shell_api, "_snapshot", _chart_snap)
+    monkeypatch.setitem(shell_api._verdict_cache, "key", None)
+    code, d = shell_api.get("/api/v2/team", {})
+    assert code == 200 and [h["verdict"] for h in d["sessions"][0]["helpers"]] == [None, None, None]
+    real_import = shell_api.importlib.import_module
+
+    def flaky(name):
+        if name == "ledger2.store":
+            raise RuntimeError("ledger unavailable")
+        return real_import(name)
+    monkeypatch.setattr(shell_api.importlib, "import_module", flaky)
+    code, d = shell_api.get("/api/v2/team", {})
+    assert code == 200 and d["sessions"][0]["helpers"][0]["verdict"] is None
+
+
+# ---- task groups for the Team chart (helper task, tasks[]) ---------------------------------------------
+def _grp_snap(ids=("a", "b", "c", "d", "e")):
+    def h(aid):
+        return {"agent_id": aid, "agent": "builder", "type": "implementer", "n": 1, "label": "", "bg": False, "start": "11:00",
+                "stop": "11:05", "start_h": 11.0, "stop_h": 11.08, "running": False, "resumed": False, "verdict": None}
+    return lambda: {"ok": True, "now": "2026-10-09T12:00:00", "working": 0, "counts": {}, "active": 0, "cost": 0,
+                    "timeline": {"start": 8, "end": 20, "rows": []},
+                    "sessions": [{"sid": "w", "title": "T", "project": "p", "type": "Coding", "status": "idle", "waiting": False,
+                                  "cwd": "E:/x", "helpers": [h(i) for i in ids], "helpers_total": len(ids),
+                                  "helper_ids_all": None, "span": {"start_h": 11.0, "end_h": 12.0}}]}
+
+
+def _grp_ledger(monkeypatch, tmp_path, rows, tasks):
+    led = tmp_path / "ledger"
+    led.mkdir()
+    (led / "events-2026-10-09.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    monkeypatch.setenv("ATLAS_LEDGER2_DIR", str(led))
+    monkeypatch.setitem(shell_api._verdict_cache, "key", None)
+    monkeypatch.setattr(shell_api, "_ledger_tasks", lambda: tasks)
+
+
+def _rec(tid, **kw):
+    return dict({"id": tid, "type": "coding", "area": "atlas", "title": f"title {tid}", "plan_ref": None, "started": "2026-10-09T10:00:00",
+                 "status": "done", "final_verdict": "READY"}, **kw)
+
+
+def test_helper_task_is_the_launch_task_even_when_paired_after_a_new_declaration(monkeypatch, tmp_path):
+    rows = [{"ev": "work_type", "task": "T-1", "type": "coding", "area": "atlas", "t": "2026-10-09T10:00:00"},
+            {"ev": "helper_start", "task": "T-1", "tuid": "u1", "helper": "implementer"},
+            {"ev": "work_type", "task": "T-2", "type": "research", "area": "pers", "t": "2026-10-09T10:30:00"},
+            {"ev": "helper_paired", "task": "T-2", "agent_id": "a", "helper": "implementer", "tuid": "u1"},   # paired after the new declaration
+            {"ev": "helper_paired", "task": "T-2", "agent_id": "b", "helper": "implementer", "tuid": None},   # unmatched: the pairing task
+            {"ev": "helper_paired", "task": "T-2", "agent_id": "a", "helper": "implementer", "tuid": None},   # resume pairing keeps the first
+            {"ev": "helper_resume", "task": "T-2", "agent_id": "a", "helper": "implementer"},
+            {"ev": "helper_resume", "task": "T-2", "agent_id": "d", "helper": "implementer"}]
+    _grp_ledger(monkeypatch, tmp_path, rows, [_rec("T-1", title="Build it", final_verdict="NEEDS_CHANGES"), _rec("T-2", type="research", status="open", final_verdict=None)])
+    monkeypatch.setattr(shell_api, "_snapshot", _grp_snap())
+    s = shell_api.get("/api/v2/team", {})[1]["sessions"][0]
+    assert {h["agent_id"]: h["task"] for h in s["helpers"]} == {"a": "T-1", "b": "T-2", "c": None, "d": "T-2", "e": None}
+    assert "helper_ids_all" not in s
+    g = {t["id"]: t for t in s["tasks"]}
+    assert [t["id"] for t in s["tasks"]] == ["T-1", "T-2", None]                       # by started, the other group last
+    assert g["T-1"]["runs"] == 1 and g["T-1"]["title"] == "Build it" and g["T-1"]["final_verdict"] == "NEEDS_CHANGES"
+    assert g["T-2"]["runs"] == 2 and g["T-2"]["status"] == "open" and g[None]["runs"] == 2
+    assert g[None]["title"] == "Other helper runs" and g[None]["id"] is None
+
+
+def test_task_missing_from_all_tasks_falls_back_to_the_work_type_event(monkeypatch, tmp_path):
+    rows = [{"ev": "work_type", "task": "T-9", "type": "legal", "area": "admin", "t": "2026-10-09T11:00:00"},
+            {"ev": "helper_paired", "task": "T-9", "agent_id": "a", "helper": "x", "tuid": None}]
+    _grp_ledger(monkeypatch, tmp_path, rows, [])
+    monkeypatch.setattr(shell_api, "_snapshot", _grp_snap(("a",)))
+    t = shell_api.get("/api/v2/team", {})[1]["sessions"][0]["tasks"]
+    assert t == [{"id": "T-9", "type": "legal", "area": "admin", "title": None, "plan_ref": None, "plan_title": None,
+                  "started": "2026-10-09T11:00:00", "status": None, "final_verdict": None, "runs": 1}]
+
+
+def test_per_task_counts_use_the_uncapped_id_list(monkeypatch, tmp_path):
+    rows = [{"ev": "helper_paired", "task": "T-1", "agent_id": f"x{i}", "helper": "x", "tuid": None} for i in range(10)]
+    _grp_ledger(monkeypatch, tmp_path, rows, [_rec("T-1")])
+    snap = _grp_snap(("x8", "x9"))()
+    snap["sessions"][0].update(helpers_total=10, helper_ids_all=[f"x{i}" for i in range(10)])
+    monkeypatch.setattr(shell_api, "_snapshot", lambda: snap)
+    s = shell_api.get("/api/v2/team", {})[1]["sessions"][0]
+    assert len(s["helpers"]) == 2 and s["helpers_total"] == 10 and s["tasks"][0]["runs"] == 10
+
+
+def test_task_groups_survive_a_missing_ledger(monkeypatch, tmp_path):
+    monkeypatch.setenv("ATLAS_LEDGER2_DIR", str(tmp_path / "missing"))
+    monkeypatch.setitem(shell_api._verdict_cache, "key", None)
+    monkeypatch.setattr(shell_api, "_snapshot", _grp_snap(("a", "b")))
+    s = shell_api.get("/api/v2/team", {})[1]["sessions"][0]
+    assert [t["id"] for t in s["tasks"]] == [None] and s["tasks"][0]["runs"] == 2 and s["helpers"][0]["task"] is None

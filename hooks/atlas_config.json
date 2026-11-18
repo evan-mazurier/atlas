@@ -4,7 +4,7 @@
   "ledger_dir": null,
   "workflows_file": "<repo>\\workflows.yaml",
   "areas_file": "<repo>\\areas.yaml",
-  "weights": [["haiku-5", 0.05], ["haiku", 0.5], ["opus", 2.0], ["sonnet", 1.0]],
+  "weights": [["haiku-5", 0.05], ["haiku", 0.5], ["opus", 2.0], ["sonnet", 1.0], ["fable", 4.0]],
   "haiku5_tier_prompt": 100000,
   "haiku5_high_weight": 0.25,
   "interactive_entries": [],

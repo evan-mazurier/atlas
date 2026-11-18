@@ -40,7 +40,11 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("ATLAS_PLAN_VERSION_FILE", str(ver))
     monkeypatch.setenv("ATLAS_AREAS_FILE", str(areas))
     monkeypatch.setenv("ATLAS_REGISTRY_FILE", str(reg))
-    from plan import model
+    monkeypatch.setenv("ATLAS_FINANCE_DB", str(tmp_path / "no-finance.db"))   # the Brief never reads the live databases
+    monkeypatch.setenv("ATLAS_INBOX_DB", str(tmp_path / "no-inbox.db"))
+    from plan import brief_act, model
+    monkeypatch.setattr(brief_act, "_ledger_tasks", lambda: [])               # nor the live ledger or team state
+    monkeypatch.setattr(brief_act, "_live_sessions", lambda now: [])
     monkeypatch.setattr(model, "_auto_runs", lambda a, b: [])
     model._plan_cache.clear()
     model._reg_cache.clear()

@@ -3,6 +3,7 @@
     py -3.12 tools/plan_day.py show [--day YYYY-MM-DD] [--days N] [--url URL]
     py -3.12 tools/plan_day.py apply <ops.json|-> [--dry-run]
     py -3.12 tools/plan_day.py memos [--url URL]
+    py -3.12 tools/plan_day.py deadlines [--days N] [--url URL]
 
 Talks to the live cockpit (`--url` / ATLAS_COCKPIT_URL, default http://127.0.0.1:8765) through the Plan API;
 it never writes a file itself, so every guard of the Plan engine (window, all-day rule, attention) applies.
@@ -10,7 +11,9 @@ it never writes a file itself, so every guard of the Plan engine (window, all-da
 show   one line per event, tab separated: day, start-end (or all-day), area short, attention, id, title.
        A recurring occurrence has the id `evt_xxxxxxxx@YYYY-MM-DD`. A done event gets a final column `done`.
 apply  a JSON list of ops, applied in order, each with a fresh base (the version is read before each write):
-         {"op":"add","title","day","start","end","area"?,"attention"?,"notes"?}
+         {"op":"add","title","day","start","end","area"?,"attention"?,"notes"?,"recur"?}
+                                         (recur e.g. {"freq":"monthly","weekday":"sat","week":"last"}: the last Saturday of
+                                          every month; `day` must be such a Saturday)
          {"op":"move","id","day","start","end","occurrence"?}
          {"op":"delete","id"}            (an id `evt_x@DAY` skips that one occurrence)
          {"op":"retitle","id","title"}
@@ -21,6 +24,15 @@ apply  a JSON list of ops, applied in order, each with a fresh base (the version
                                                           start + the task's estimate_min, 60 when it has none)
        An id written `evt_xxxxxxxx@YYYY-MM-DD` is split into id + occurrence. Stops at the first refusal,
        prints which ops were applied and the server's reason verbatim; exit 1 then, 0 when all applied.
+       Deadline ops (docs/v2/contracts.md 5.3a), same conventions:
+         {"op":"deadline","title","day","id"?,"area"?,"kind"?,"remind_days"?,"priority"?,"recur"?,"notes"?}
+                                         (adds; edits the item when `id` is given)
+         {"op":"deadline-done","id","occurrence_key"?}              (a series needs the key)
+         {"op":"deadline-move","id","to_day","occurrence_key"?}     (snooze; a series moves that occurrence only)
+         {"op":"deadline-delete","id","occurrence_key"?}            (a series: the key skips that occurrence, none removes it all)
+       An id written `dl_xxxxxxxx@YYYY-MM-DD` is split into id + occurrence_key.
+deadlines  the Brief's deadline entries (overdue, Do not miss, then Next up to --days, default 30, max 30), tab
+       separated: id (`id@key` for a series), displayed day, kind, priority, area short, title.
 memos  the open and the scheduled memos (the "To schedule" rail), tab separated: id, area short, estimate_min,
        `open` or `planned <day> <start>`, title. Open first, then scheduled.
        --dry-run prints the requests that would be sent and touches nothing (no network).
@@ -36,7 +48,8 @@ import urllib.error
 import urllib.request
 
 DEFAULT_URL = "http://127.0.0.1:8765"
-ADD_FIELDS = ("title", "day", "start", "end", "area", "attention", "notes")
+ADD_FIELDS = ("title", "day", "start", "end", "area", "attention", "notes", "recur")
+DEADLINE_FIELDS = ("id", "title", "day", "area", "kind", "remind_days", "priority", "recur", "notes")
 
 
 class PlanDayError(Exception):
@@ -105,7 +118,28 @@ def build_request(op: dict) -> tuple[str, dict]:
         if op.get("end"):
             body["end"] = op["end"]
         return "task/place", body          # a missing end is filled in by cmd_apply (needs the task's estimate)
-    raise PlanDayError(f"unknown op {kind!r} (add, move, delete, retitle, done, undone, memo, place)")
+    if kind == "deadline":
+        id_, _ = split_id(op.get("id"))
+        if not id_ and (not str(op.get("title") or "").strip() or not op.get("day")):
+            raise PlanDayError("deadline needs title and day (or an id to edit)")
+        dl = {k: op[k] for k in DEADLINE_FIELDS if k in op and op[k] != ""}
+        if id_:
+            dl["id"] = id_
+        return "deadline", {"deadline": dl}
+    if kind in ("deadline-done", "deadline-move", "deadline-delete"):
+        did, occ = split_id(op.get("id"))
+        if not did:
+            raise PlanDayError(f"{kind} needs id")
+        body = {"id": did}
+        if kind == "deadline-move":
+            if not op.get("to_day"):
+                raise PlanDayError("deadline-move needs id and to_day")
+            body["to_day"] = op["to_day"]
+        if op.get("occurrence_key") or occ:
+            body["occurrence_key"] = op.get("occurrence_key") or occ
+        return "deadline/" + kind.split("-", 1)[1], body
+    raise PlanDayError(f"unknown op {kind!r} (add, move, delete, retitle, done, undone, memo, place, "
+                       "deadline, deadline-done, deadline-move, deadline-delete)")
 
 
 def _hhmm_plus(start: str, minutes: int) -> str:
@@ -137,6 +171,32 @@ def memo_lines(payload: dict) -> list[str]:
         when = f"planned {pl['day']} {pl['start']}" if pl else "open"
         out.append("	".join([str(t["id"]), short.get(area, "-"), est, when, str(t.get("title"))]))
     return out
+
+
+def deadline_lines(payload: dict, short: dict | None = None) -> list[str]:
+    """One line per Brief deadline entry (overdue and Do not miss first, then Next 30 days):
+    id (`id@key` for a series), displayed day, kind, priority, area short, title."""
+    short = short or {}
+    out = []
+    for e in (payload.get("do_not_miss") or []) + (payload.get("next") or []):
+        did = e["id"] + ("@" + e["occurrence_key"] if e.get("recurring") else "")
+        out.append("	".join([did, str(e["day"]), str(e["kind"]), str(e["priority"]),
+                              short.get(e.get("area"), "-"), str(e["title"])]))
+    return out
+
+
+def cmd_deadlines(url: str, days: int) -> int:
+    """Reads GET /api/v2/plan/brief for today (the Brief's own two blocks); `days` caps the Next block."""
+    today = dt.date.today()
+    code, out = _call(url, "GET", f"/api/v2/plan/brief?day={today.isoformat()}")
+    if code != 200 or not out.get("ok"):
+        raise PlanDayError(f"cannot read the Brief: {out.get('error') or code}")
+    limit = (today + dt.timedelta(days=max(0, days))).isoformat()
+    out = {**out, "next": [e for e in out.get("next") or [] if e["day"] <= limit]}
+    short = {a["id"]: a.get("short") or a["id"].upper() for a in get_plan(url, today.isoformat(), today.isoformat()).get("areas") or []}
+    for ln in deadline_lines(out, short):
+        print(ln)
+    return 0
 
 
 def cmd_memos(url: str) -> int:
@@ -235,6 +295,8 @@ def main(argv=None) -> int:
     a.add_argument("file", help="ops JSON file, or - for stdin")
     a.add_argument("--dry-run", action="store_true")
     sub.add_parser("memos", parents=[common])
+    dl = sub.add_parser("deadlines", parents=[common])
+    dl.add_argument("--days", type=int, default=30)
     args = ap.parse_args(sys.argv[1:] if argv is None else argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -242,6 +304,8 @@ def main(argv=None) -> int:
         if args.cmd == "show":
             dt.date.fromisoformat(args.day)
             return cmd_show(args.url, args.day, args.days)
+        if args.cmd == "deadlines":
+            return cmd_deadlines(args.url, args.days)
         if args.cmd == "memos":
             return cmd_memos(args.url)
         return cmd_apply(args.url, args.file, args.dry_run)

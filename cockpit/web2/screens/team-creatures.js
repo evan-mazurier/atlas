@@ -45,8 +45,15 @@ function human(){
 const art = (id, key) => id === "op" ? human() : (SHAPE[id] ? creature(id, key) : "");
 /* end creatures */
 
+/* creatures: added after v1 (advisor, the compass star; ADD only, the v1 block above stays untouched) */
+T.advisor = {name:"Advisor",tier:"fable"};
+G.fable = ["#FFC24D","#FF6B4D"];
+SHAPE.advisor = {d:"M50 8C54 34 66 46 92 50C66 54 54 66 50 92C46 66 34 54 8 50C34 46 46 34 50 8Z",e:[50,50,9],h:"dot",px:[[74,18,4],[82,26,3],[20,22,4]]};
+ORDER.push("advisor");   // right after partner (the senior-reviewer creature)
+/* end added creatures */
+
 // One name per helper: the roster name (kit/format.js). The creature keys above stay as artwork keys only.
-const ROSTER_KEY = { chief: "chief", scout: "scout", clerk: "sweeper", analyst: "researcher", builder: "implementer", writer: "drafter", labtech: "test-runner", inspector: "reviewer", partner: "senior-reviewer" };
+const ROSTER_KEY = { chief: "chief", scout: "scout", clerk: "sweeper", analyst: "researcher", builder: "implementer", writer: "drafter", labtech: "test-runner", inspector: "reviewer", partner: "senior-reviewer", advisor: "advisor" };
 for (const k in ROSTER_KEY) T[k].name = rosterName(ROSTER_KEY[k]);
 
 export { T, G, SHAPE, ORDER, art, creature, human, hash };

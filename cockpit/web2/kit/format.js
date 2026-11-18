@@ -108,7 +108,7 @@ export function assignLanes(items) {
 
 /** The roster names (agent file names) the operator knows; the Ledger and the Team screen both use these.
     The main session ("chief") reads "orchestrator"; unknown types (general-purpose, Explore...) show as they are. */
-const ROSTER = ["scout", "test-runner", "sweeper", "implementer", "researcher", "drafter", "reviewer", "senior-reviewer"];
+const ROSTER = ["scout", "test-runner", "sweeper", "implementer", "researcher", "drafter", "reviewer", "senior-reviewer", "advisor"];
 export function rosterName(type) {
   const raw = String(type == null ? "" : type), k = raw.toLowerCase();
   if (k === "chief") return "orchestrator";
@@ -127,7 +127,7 @@ export function delta(value, prev, good, unit = "") {
   return { text: (d > 0 ? "▲ " : "▼ ") + num, tone };
 }
 
-const HELPER_TIERS = { chief: "opus", "senior-reviewer": "opus", scout: "haiku", explore: "haiku", sweeper: "haiku", "test-runner": "haiku" };
+const HELPER_TIERS = { chief: "opus", "senior-reviewer": "opus", advisor: "fable", scout: "haiku", explore: "haiku", sweeper: "haiku", "test-runner": "haiku" };
 export function helperTier(type) { return HELPER_TIERS[String(type || "").toLowerCase()] || "sonnet"; }
 
 /** 6200000 -> "6.2M", 310000 -> "310k", 0 -> "0". */

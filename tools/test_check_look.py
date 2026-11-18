@@ -181,3 +181,11 @@ def test_cli_exit_codes_and_json(tmp_path):
     out = json.loads(bad.stdout)
     assert bad.returncode == 1 and out["ok"] is False and out["problems"]
     assert run_cli("--json", str(tmp_path / "missing.yaml")).returncode == 1
+
+
+def test_look_css_requires_the_fable_token(tmp_path):
+    assert "--m-fable" in cl.COLOR_TOKENS and "--m-fable:" in good_css()
+    assert cl.check_look(ROOT / "cockpit" / "web2" / "look.css") == []
+    p = tmp_path / "look.css"
+    p.write_text(good_css().replace("--m-fable:#f5a142;", ""), encoding="utf-8")
+    assert any("missing token --m-fable" in x for x in cl.check_look(p))

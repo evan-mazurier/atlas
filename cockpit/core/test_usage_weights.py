@@ -21,6 +21,8 @@ def _no_env(monkeypatch):
     ("claude-haiku-4-5-20251001", 500_000, 0.5),
     ("claude-opus-5-5", 0, 2.0),
     ("claude-sonnet-5-5", 0, 1.0),
+    ("claude-fable-5-2", 0, 4.0),
+    ("fable", 1_000_000, 4.0),
     ("<synthetic>", 0, 1.0),
     ("claude-mystery-9", 0, 1.0),
     (None, 0, 1.0),

@@ -222,3 +222,44 @@ def test_place_refusal_is_printed_and_dry_run_shows_the_end_rule(server, capsys,
     n = len(server.seen)
     code, out = run(server, capsys, "apply", write_ops(tmp_path, ops), "--dry-run")
     assert code == 0 and "task/place" in out.out and "start + estimate_min" in out.out and len(server.seen) == n
+
+
+# ── deadline ops (design notes, not in this copy section 4) ──────────────────────────────────────────────────
+def test_build_request_deadline_ops():
+    rec = {"freq": "monthly", "weekday": "sat", "week": "last"}
+    assert pd.build_request({"op": "deadline", "title": "Monthly review, last Saturday", "day": "2026-11-28",
+                             "remind_days": 7, "recur": rec, "kind": ""}) == (
+        "deadline", {"deadline": {"title": "Monthly review, last Saturday", "day": "2026-11-28", "remind_days": 7, "recur": rec}})
+    assert pd.build_request({"op": "deadline", "id": "dl_ab12cd34", "priority": "high"}) == (
+        "deadline", {"deadline": {"id": "dl_ab12cd34", "priority": "high"}})
+    assert pd.build_request({"op": "deadline-done", "id": "dl_ab12cd34@2026-12-26"}) == (
+        "deadline/done", {"id": "dl_ab12cd34", "occurrence_key": "2026-12-26"})
+    assert pd.build_request({"op": "deadline-move", "id": "dl_ab12cd34", "to_day": "2027-01-02"}) == (
+        "deadline/move", {"id": "dl_ab12cd34", "to_day": "2027-01-02"})
+    assert pd.build_request({"op": "deadline-delete", "id": "dl_ab12cd34", "occurrence_key": "2026-12-26"}) == (
+        "deadline/delete", {"id": "dl_ab12cd34", "occurrence_key": "2026-12-26"})
+    for bad in ({"op": "deadline", "title": "T"}, {"op": "deadline-move", "id": "dl_x"}, {"op": "deadline-done"}):
+        with pytest.raises(pd.PlanDayError):
+            pd.build_request(bad)
+
+
+def test_deadline_dry_run_sends_nothing(server, capsys, tmp_path):
+    ops = [{"op": "deadline", "title": "T", "day": "2026-12-30"}, {"op": "deadline-done", "id": "dl_ab12cd34"}]
+    code, out = run(server, capsys, "apply", write_ops(tmp_path, ops), "--dry-run")
+    assert code == 0 and server.seen == []
+    assert "POST /api/v2/plan/deadline " in out.out and "POST /api/v2/plan/deadline/done " in out.out
+
+
+def test_deadline_apply_list_and_stop_at_refusal(server, capsys, tmp_path):
+    ops = [{"op": "deadline", "title": "Licence renewal", "day": "2030-12-30", "priority": "high", "remind_days": 21},
+           {"op": "deadline", "title": "Bad kind", "day": "2026-12-30", "kind": "nope"},
+           {"op": "deadline", "title": "Never", "day": "2026-12-30"}]
+    code, out = run(server, capsys, "apply", write_ops(tmp_path, ops))
+    assert code == 1 and "applied 1 of 3" in out.out and "kind must be one of" in out.out
+    import datetime as dt
+    far = {"op": "deadline", "title": "Far", "day": (dt.date.today() + dt.timedelta(days=3)).isoformat(), "remind_days": 5}
+    assert run(server, capsys, "apply", write_ops(tmp_path, [far]))[0] == 0
+    code, out = run(server, capsys, "deadlines")
+    assert code == 0
+    lines = [ln.split("\t") for ln in out.out.strip().splitlines()]
+    assert [(ln[2], ln[5]) for ln in lines] == [("deadline", "Far")] and lines[0][0].startswith("dl_")

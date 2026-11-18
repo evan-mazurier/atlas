@@ -73,6 +73,7 @@ def fixture_events():
                             E("refusal", 114, 5, guard="done_lock", would=False, task=tid(5), detail="unchecked"),
                             E("refusal", 114, 5, guard="quick_question", would=False, task=tid(5), detail="q"),
                             E("refusal", 114, 5, guard="declare", would=False, task=tid(5), detail="declare"),
+                            E("refusal", 114, 5, guard="edit_limit", would=False, task=tid(5), detail="edit limit"),
                             E("refusal", 115, 5, guard="rework", would=False, task=tid(5), detail="carry-over notice"),
                             E("refusal", 115, 5, guard="rework", would=True, task=tid(5), detail="x"),
                             E("task_done", 116, 5, task=tid(5))]
@@ -181,6 +182,7 @@ def test_health_statuses_on_a_busy_day(ledger):
     flow = h["Refusals: normal flow"]
     assert flow["status"] == "green"
     assert "publish 1" in flow["fact"] and "config 1" in flow["fact"] and "quick_question 1" in flow["fact"]
+    assert "edit_limit 1" in flow["fact"] and "Refusals: edit_limit" not in h
     assert "declare 1" in flow["fact"] and "Refusals: declare" not in h
     assert "would-have (record mode) 1" in flow["fact"]
     assert h["Send-backs"]["status"] == "amber" and "(3)" in h["Send-backs"]["fact"]

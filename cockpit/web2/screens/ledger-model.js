@@ -1,5 +1,14 @@
 /* Pure helpers of the Ledger tasks table (no DOM, so node can test them). */
 
+/** Model tiers, in stacking order, with their display names (contracts §4 `--m-<tier>` tokens, §5.2 `tier`). */
+export const TIERS = ["opus", "sonnet", "haiku", "fable"];
+export const TIER_NAMES = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku", fable: "Fable" };
+/** An unknown tier shows as it is. */
+export function tierName(t) { return TIER_NAMES[t] || t; }
+export function tierColor(t) { return "var(--m-" + t + ")"; }
+/** One day's total across every tier: the scale of the usage chart must include all of them. */
+export function dayTotal(d) { return TIERS.reduce((s, m) => s + ((d && d[m]) || 0), 0); }
+
 /** The task's own name: the API's `title` (Plan item, else summary goal, else first helper label, else session title),
     with the same chain as a fallback for records without it, else its id. */
 export function taskTitle(t) {
@@ -22,13 +31,15 @@ export function taskCellParts(t) {
 const STATUS_WORDS = { open: "in progress", done: "closed", ended: "session ended", switched: "next task started", abandoned: "abandoned with open findings" };
 export function statusWord(s) { return STATUS_WORDS[s] || s || "in progress"; }
 
-/** Rework rounds of a task: {main, sub}. main = "{own} of {budget}" (+ " +N granted"), sub = "{n} carried over" or "".
-    The rounds counted are this task's own; rounds carried from the previous unresolved task are listed apart. */
+/** Rework rounds of a task: {main, sub}. main = "{used} of {budget}" (+ ", senior N" when senior rounds exist) (+ " +N granted"), sub = "{n} carried over" or "".
+    The main count is `used`, which INCLUDES the carried rounds (the count the budget is judged on); the carried rounds
+    are also shown on the line below (sub), so used 15 with carried 14 reads "15 of N" and "14 carried over". */
 export function roundsParts(r) {
   if (!r) return { main: "–", sub: "" };
-  const own = r.own != null ? r.own : r.needs_changes || 0;
+  const own = r.used != null ? r.used : r.own != null ? r.own : r.needs_changes || 0;
   const carried = r.carried || 0;
   let main = r.budget == null ? (own ? own + " (no budget)" : "no budget") : own + " of " + r.budget;
+  if ((r.own_senior || 0) > 0) main += ", senior " + r.own_senior;
   if ((r.granted || 0) > 0) main += " +" + r.granted + " granted";
   return { main, sub: carried > 0 ? carried + " carried over" : "" };
 }
@@ -37,9 +48,9 @@ export function roundsParts(r) {
 export function verdictParts(t) {
   const real = (t.refusals || []).filter((x) => x.would === false && !x.notice && x.guard !== "declare");   // a declare refusal never relabels a task
   const refused = real.find((x) => x.guard === "rework") || real[0];
-  const why = { rework: "over budget", publish: "publish not allowed", config: "config change not allowed" };
+  const why = { rework: "over budget", publish: "publish not allowed", config: "config change not allowed", edit_limit: "edit limit" };
   if (refused && t.final_verdict !== "READY") {
-    const normalFlow = refused.guard === "config" || refused.guard === "publish";    // normal flow: ask the operator
+    const normalFlow = refused.guard === "config" || refused.guard === "publish" || refused.guard === "edit_limit";    // normal flow: ask the operator
     return ["×", normalFlow ? "warn" : "crit", "Refused, " + (why[refused.guard] || refused.guard || "guard")];
   }
   if (t.unverified_flag) return ["!", "warn", "Unverified, no passing review"];
@@ -66,3 +77,28 @@ export const TASK_HEAD_TIPS = {
   Usage: "Price-weighted tokens, Sonnet = 1.",
   Verdict: "The latest review verdict, or the task status when there is none.",
 };
+
+/** Tone of an "Earlier changes" status word: worked = good, missed = bad, anything else (partial, no data) = neutral. */
+export function changeTone(status) {
+  const s = String(status == null ? "" : status).trim().toLowerCase();
+  if (s.startsWith("worked")) return "good";
+  if (s.startsWith("missed")) return "bad";
+  return "neutral";
+}
+
+/** Display text of a report summary KPI ({value, unit}). */
+export function reportKpiText(k) {
+  const v = k && k.value;
+  if (typeof v !== "number" || !isFinite(v)) return "–";
+  const n = Math.abs(v) >= 100000 ? v.toLocaleString("en-US") : String(Math.round(v * 100) / 100);
+  return k.unit === "%" ? n + " %" : k.unit === "h" ? n + " h" : n;
+}
+
+/** Splits an "Earlier changes" status into the chip keyword and the remaining note:
+    "worked (measured after ...)" gives {key: "worked", rest: "(measured after ...)"}; unknown wording keeps its first word. */
+export function changeParts(status) {
+  const s = String(status == null ? "" : status).trim();
+  const m = /^(worked|missed|partial|no data)\b/i.exec(s) || /^(\S+)/.exec(s);
+  if (!m) return { key: "", rest: "" };
+  return { key: m[1], rest: s.slice(m[0].length).trim() };
+}

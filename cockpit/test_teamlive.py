@@ -617,7 +617,7 @@ def test_silent_helper_is_kept_while_the_session_has_not_moved_on_or_it_is_recen
 
 
 def test_timeline_row_carries_title_and_type_without_the_project():
-    # Team rows read "title · type of work · area chip" (docs/v2/review-changes.md): the folder is not in them.
+    # Team rows read "title · type of work · area chip" (design notes, not in this copy): the folder is not in them.
     evs = [prompt("12:00:00"), ev("12:00:02", "WorkType", type="coding")]
     evs += helper("12:10:00", "12:20:00", "implementer", "x")
     evs += [ev("12:25:00", "Stop")]
@@ -727,3 +727,74 @@ def test_helper_transcript_mtime_reads_the_subagents_folder(tmp_path):
     os.utime(f, (t.timestamp(), t.timestamp()))
     assert teamlive.helper_transcript_mtime("sid1", str(main), "h1") == t
     assert teamlive.helper_transcript_mtime("sid1", str(main), "missing") is None
+
+
+# --- advisor (compass star, tier fable; design notes, not in this copy §7 A16) -----------------------------
+def test_advisor_is_drawn_counted_and_tiered_without_a_key_error():
+    evs = [prompt("12:00:00"), ev("12:00:30", "WorkType", type="coding")]
+    evs += helper("12:01:00", "12:05:00", "advisor", "scope: big task", aid="a1", tuid="t1")
+    evs += helper("12:06:00", None, "advisor", "unstick: again", aid="a2", tuid="t2", bg=True)
+    evs += [ev("12:08:00", "Stop")]
+    st = build(evs, cost=lambda sid, tr: 10)
+    s = lane(st)
+    assert agents(s)[2:] == [("advisor", "done"), ("advisor", "working")]
+    assert [x["what"] for x in s["steps"][2:]] == ["scope: big task", "unstick: again"]
+    assert s["status"] == "working"                       # a running advisor is a working helper (any_helper_working)
+    assert st["counts"] == {"advisor": 1}                 # chief has stopped; the running advisor counts
+    tiers = [g[2] for g in st["timeline"]["rows"][0]["segs"]]
+    assert "fable" in tiers
+    assert teamlive.AGENTS["advisor"] == ("advisor", "fable") and teamlive.AGENT_TYPE_ID["advisor"] == "advisor"
+    assert set(teamlive.AGENT_TYPE_ID.values()) <= set(teamlive.AGENTS)
+
+
+# ---- helper runs for the Team chart (helpers, helpers_total, span) -------------------------------------
+def test_helpers_list_numbers_parallel_same_type_runs_and_marks_running():
+    evs = [prompt("12:00:00"), ev("12:00:01", "WorkType", type="coding"),
+           ev("12:01:00", "PreToolUse", tool="Agent", agent_type="implementer", label="first <b>", bg=False, tuid="t1"),
+           ev("12:01:00", "PreToolUse", tool="Agent", agent_type="implementer", label="second", bg=False, tuid="t2"),
+           _start("12:01:01", "a", "implementer"), _start("12:01:02", "b", "implementer"),
+           _stop("12:10:00", "a", "implementer"),
+           ev("12:10:00", "PostToolUse", tool="Agent", tuid="t1", status="completed", agent_id="a")]
+    s = lane(build(evs))
+    hs = s["helpers"]
+    assert [(h["agent_id"], h["agent"], h["n"]) for h in hs] == [("a", "builder", 1), ("b", "builder", 2)]
+    a, b = hs
+    assert (a["running"], b["running"]) == (False, True)
+    assert a["start"] == "12:01" and a["stop"] == "12:10" and a["stop_h"] == pytest.approx(12 + 10 / 60, abs=1e-3)
+    assert b["stop"] is None and b["stop_h"] is None and b["start_h"] == pytest.approx(12 + 1 / 60 + 2 / 3600, abs=1e-3)
+    assert a["verdict"] is None and a["resumed"] is False and s["helpers_total"] == 2
+    assert s["span"]["start_h"] == pytest.approx(12.0) and s["span"]["end_h"] == pytest.approx(12.5)   # now while working
+    assert [h["n"] for h in lane(build(evs))["helpers"] if h["agent"] == "builder"] == [1, 2]
+    assert len(s["steps"]) >= 4                                           # steps stay as they were
+
+
+def test_helpers_numbering_is_per_type_and_resumed_is_flagged():
+    evs = [prompt("12:00:00"), ev("12:00:01", "WorkType", type="legal")]
+    evs += helper("12:01:00", "12:02:00", "scout", "x", aid="s1a", tuid="t1")
+    evs += helper("12:03:00", None, "senior-reviewer", "Review", aid="r1", tuid="t2")
+    evs += [_stop("12:05:00", "r1", "senior-reviewer"), _start("12:06:00", "r1", "senior-reviewer"), _stop("12:07:00", "r1", "senior-reviewer")]
+    hs = lane(build(evs))["helpers"]
+    assert [(h["agent"], h["n"], h["resumed"]) for h in hs] == [("scout", 1, False), ("partner", 1, True)]
+
+
+def test_idle_session_keeps_its_helpers_and_span_ends_at_last_activity():
+    evs = [prompt("12:00:00"), ev("12:00:01", "WorkType", type="coding")]
+    evs += helper("12:01:00", "12:05:00", "reviewer", "Check", aid="r", tuid="t1")
+    evs.append(ev("12:06:00", "Stop"))
+    s = lane(build(evs))
+    assert s["status"] == "idle" and len(s["helpers"]) == 1 and not s["helpers"][0]["running"]
+    assert s["span"] == {"start_h": pytest.approx(12.0), "end_h": pytest.approx(12.1)}
+
+
+def test_helpers_capped_to_latest_with_total_and_all_ids(monkeypatch):
+    assert teamlive.MAX_CHART_HELPERS == 200
+    monkeypatch.setattr(teamlive, "MAX_CHART_HELPERS", 40)
+    evs = [prompt("11:00:00"), ev("11:00:01", "WorkType", type="coding")]
+    for i in range(45):
+        m = i + 1
+        evs += helper(f"11:{m:02d}:00", f"11:{m:02d}:30", "scout", f"job {i}", aid=f"a{i}", tuid=f"t{i}")
+    s = lane(build(evs))
+    assert s["helpers_total"] == 45 and len(s["helpers"]) == 40
+    assert [h["n"] for h in s["helpers"]][0] == 6 and s["helpers"][-1]["n"] == 45 and s["helpers"][-1]["label"] == "job 44"
+    assert len(s["helper_ids_all"]) == 45 and s["helper_ids_all"][0] == "a0"      # uncapped ids, for per-task counts
+    assert lane(build(evs[:6]))["helper_ids_all"] is None                         # not capped: no list

@@ -1,4 +1,4 @@
-"""Screen-review rules (docs/v2/review-changes.md, Plan): day window, all-day rule, area keywords,
+"""Screen-review rules (design notes, not in this copy, Plan): day window, all-day rule, area keywords,
 task placement, agents' lane cap. Temp copies only (conftest)."""
 import yaml
 
@@ -90,7 +90,10 @@ def test_recurring_all_day_occurrence_counts_and_a_skipped_one_does_not(api):
 
 # ── area keywords ──────────────────────────────────────────────────────────────────────────────
 def areas():
-    return model.load_areas()
+    # the test-owned fixture, never the live areas.yaml (contracts.md section 10)
+    from plan.conftest import AREAS_FIXTURE
+    from ledger2.areas import load_areas
+    return load_areas(AREAS_FIXTURE)
 
 
 def area_of(title, **kw):
@@ -117,9 +120,16 @@ def test_keywords_are_whole_words_only():
 
 
 def test_prefix_first_then_keywords_file_order_explicit_wins():
-    assert area_of("Product study") == ("md", "match")           # prefix beats the Learning keyword
+    assert area_of("Product study") == ("md", "match")         # prefix beats the Learning keyword
     assert area_of("Atlas paper study") == ("job", "match")              # keywords: first area in file order
     assert area_of("Study", area="pers") == ("pers", "explicit")
+
+
+def test_archived_areas_are_skipped_by_both_match_steps():
+    # contracts.md: "Archived areas are skipped by both match steps (an explicit `area` still resolves to them)"
+    archived = [dict(a, archived=True) if a["id"] == "md" else a for a in areas()]
+    assert model.event_area({"title": "Product study"}, archived) == ("train", "match")
+    assert model.event_area({"title": "Product study", "area": "md"}, archived) == ("md", "explicit")
 
 
 def test_api_events_carry_the_keyword_area(api):

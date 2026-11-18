@@ -20,7 +20,7 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 
 CREATURES = {
     "implementer": "implementer", "test-runner": "test-runner", "reviewer": "reviewer", "senior-reviewer": "senior-reviewer",
-    "scout": "scout", "sweeper": "sweeper", "researcher": "researcher", "drafter": "drafter",
+    "scout": "scout", "sweeper": "sweeper", "researcher": "researcher", "drafter": "drafter", "advisor": "advisor",
 }
 
 ATTEMPT_KEYS = ("actor", "desc", "target", "effect")
@@ -134,10 +134,11 @@ def _context(e: dict, before: list[dict], wf: dict):
         else:
             total = budget + int(r.get("granted") or 0)
             granted = f" ({r.get('granted')} granted)" if r.get("granted") else ""
-            used = int(r.get("needs_changes") or 0)
+            used = int(r["used"] if r.get("used") is not None else (r.get("needs_changes") or 0))   # carried + the busiest tier
+            nc_total = int(r.get("needs_changes") or used)    # the true total over all tiers
             if used > total:
                 tail = "; rounds beyond it were logged, not enforced" if e.get("mode") != "enforce" else ""
-                parts.append(f"{used} review rounds asked for changes on this task (budget {total}{granted}{tail}).")
+                parts.append(f"{nc_total} review rounds asked for changes on this task (budget {total}{granted}{tail}).")
             else:
                 parts.append(f"{used} of {total} rework used{granted}.")
     if e.get("actor_task"):

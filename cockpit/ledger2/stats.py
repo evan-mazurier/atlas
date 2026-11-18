@@ -235,7 +235,7 @@ def compute(week: str | None = None) -> dict:
 
     end_day = min(dt.date.today(), mon + dt.timedelta(days=6))
     days = [end_day - dt.timedelta(days=13 - i) for i in range(14)]
-    ubd = {d: {"day": d.isoformat(), "opus": 0, "sonnet": 0, "haiku": 0} for d in days}
+    ubd = {d: {"day": d.isoformat(), "opus": 0, "sonnet": 0, "haiku": 0, "fable": 0} for d in days}
     for d, _h, tr, w in costs:
         if d in ubd:
             ubd[d][tr] += int(w)

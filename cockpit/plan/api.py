@@ -12,11 +12,11 @@ import time
 import traceback
 import uuid
 
-from . import model, store, versions
+from . import brief, brief_act, model, store, versions
 from .model import (EVENT_TYPES, TASK_STATES, OWNERS, schedmath, valid_day, valid_hhmm)
 from .store import PlanError
 
-SCHED_PREFIXES = ("evt:", "plc:", "blk:")
+SCHED_PREFIXES = ("evt:", "plc:", "blk:", "dl:")
 _tray_cache: dict = {"t": 0.0, "n": 0}
 
 
@@ -34,9 +34,12 @@ def _unexpected(exc: Exception):
 
 # ── GET ────────────────────────────────────────────────────────────────────────────────────────
 def get(path, query):
-    if path.rstrip("/") != "/api/v2/plan":
+    route = path.rstrip("/")
+    if route not in ("/api/v2/plan", "/api/v2/plan/brief"):
         return None
     try:
+        if route.endswith("/brief"):
+            return 200, _brief(query or {})
         return 200, _read(query or {})
     except PlanError as exc:
         return _fail(exc)
@@ -91,6 +94,26 @@ def _read(query: dict) -> dict:
                 versions.save(st)
         version = st.version
     return model.build(sched, tdoc, frm, to, version, runs, tray_src)
+
+
+def _brief(query: dict) -> dict:
+    """GET /api/v2/plan/brief?day= : read-only (no version write). The "To act on" list is gathered after the
+    plan file locks are released, from local read-only databases (brief_act.py)."""
+    raw = query.get("day")
+    day = valid_day(raw) if raw else dt.date.today().isoformat()
+    if day is None or not "1970-01-01" <= day <= "9998-12-31":
+        raise PlanError(400, "day must be YYYY-MM-DD, from 1970-01-01 to 9998-12-31")
+    sp, tp = store.schedule_path(), store.tasks_path()
+    with contextlib.ExitStack() as stack:
+        _locks(stack, sp, tp)
+        sched, _ = store.read_doc(sp)
+        tdoc, _ = store.read_doc(tp)
+        version = versions.load().version      # loaded, never saved: the Brief writes nothing
+    d = dt.date.fromisoformat(day)
+    act, act_status = brief_act.gather(today=d)
+    out = brief.build(d, sched, tdoc, model.load_areas(), act, act_status)
+    out["version"] = version
+    return out
 
 
 def review_tray_count() -> int:
@@ -193,8 +216,8 @@ def _txn(body: dict, write: str, fn, tray: bool = False):
 
 
 def _sched_order(name: str) -> int:
-    return ("availability", "placements", "events", "work_blocks").index(name) if name in (
-        "availability", "placements", "events", "work_blocks") else 9
+    order = ("availability", "placements", "events", "work_blocks", "deadlines")
+    return order.index(name) if name in order else 9
 
 
 def post(path, body):
@@ -337,6 +360,31 @@ def _event_guard(ctx: Ctx, ev: dict, old: dict | None, verb: str = "save") -> No
         raise PlanError(400, f"can't {verb} {name!r}: {reason}")
 
 
+def _check_weekday_rule(r: dict) -> None:
+    """Same 400 rules as a deadline's recur for the monthly weekday rule (weekday + week); other keys pass."""
+    if r.get("weekday") not in (None, ""):
+        if r.get("freq") != "monthly":
+            raise PlanError(400, "recur.weekday needs freq monthly")
+        if r["weekday"] not in brief.WEEKDAYS:
+            raise PlanError(400, f"recur.weekday must be one of {', '.join(brief.WEEKDAYS)}")
+        week = r.get("week")
+        if week != "last" and (isinstance(week, bool) or week not in (1, 2, 3, 4)):
+            raise PlanError(400, "recur.week must be 'last' or 1 to 4")
+    elif r.get("week") not in (None, ""):
+        raise PlanError(400, "recur.week needs recur.weekday")
+    c = r.get("count")
+    if r.get("weekday") and c is not None and (isinstance(c, bool) or not isinstance(c, int) or c < 1):
+        raise PlanError(400, "recur.count must be a whole number >= 1")
+
+
+def _weekday_day_check(ev: dict, verb: str) -> None:
+    """A series with a weekday rule must be anchored on a day that matches it (save and whole-series move)."""
+    r = ev.get("recur")
+    if isinstance(r, dict) and r.get("weekday") and ev.get("day"):
+        if not brief.weekday_match(dt.date.fromisoformat(ev["day"]), r):
+            raise PlanError(400, f"can't {verb} {ev.get('title') or ev.get('id')!r}: {ev['day']} is not the {r.get('week')} {r['weekday']} of its month")
+
+
 def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str, allow_archived: bool = False) -> dict:
     out = dict(stored) if stored else {"id": eid}
     touches_time = False
@@ -378,6 +426,7 @@ def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str, allow_archi
                 raise PlanError(400, "recur must be an object or null")
             if v:
                 out[k] = store.normalise(v)
+                _check_weekday_rule(out[k])
             else:
                 out.pop(k, None)
         else:
@@ -386,6 +435,7 @@ def _merge_event(ctx: Ctx, stored: dict | None, req: dict, eid: str, allow_archi
         raise PlanError(400, "event requires a title")
     if not out.get("day"):
         raise PlanError(400, "event requires a valid day (YYYY-MM-DD)")
+    _weekday_day_check(out, "save")   # also when only the day changes on a stored weekday series
     if touches_time and bool(out.get("start")) != bool(out.get("end")):
         raise PlanError(400, "start and end go together (or neither for an all-day event)")
     if req.get("attention"):
@@ -409,7 +459,7 @@ def _new_id(prefix: str, existing: set) -> str:
 
 
 def _ids(lst: list, field: str = "id") -> set:
-    return {e.get(field) for e in lst if isinstance(e, dict)}
+    return {e.get(field) for e in lst if isinstance(e, dict) and isinstance(e.get(field), str)}
 
 
 # ── events ─────────────────────────────────────────────────────────────────────────────────────
@@ -525,6 +575,7 @@ def h_event_move(ctx: Ctx, body: dict):
         ev["end"] = e_req
     if bool(ev.get("start")) != bool(ev.get("end")):
         raise PlanError(400, "start and end go together (or neither for an all-day event)")
+    _weekday_day_check(ev, "move")
     _event_guard(ctx, ev, old, "move")
     events[idx] = ev
     ctx.touched[f"evt:{eid}"] = ev
@@ -583,6 +634,215 @@ def h_event_done(ctx: Ctx, body: dict):
     events[idx] = ev
     ctx.touched[f"evt:{eid}"] = ev
     return ev
+
+
+# ── deadlines (design notes, not in this copy) ─────────────────────────────────────────────────────────────
+def _int_field(v, what: str, low: int, high: int | None = None) -> int:
+    if isinstance(v, bool) or not isinstance(v, int) or v < low or (high is not None and v > high):
+        raise PlanError(400, f"{what} must be a whole number {low} to {high}" if high is not None
+                        else f"{what} must be a whole number >= {low}")
+    return v
+
+
+def _recur(v) -> dict:
+    if not isinstance(v, dict):
+        raise PlanError(400, "recur must be an object or null")
+    if v.get("freq") not in brief.FREQS:
+        raise PlanError(400, f"recur.freq must be one of {', '.join(brief.FREQS)}")
+    out = {"freq": v["freq"], "interval": _int_field(v.get("interval", 1), "recur.interval", 1)}
+    if v.get("weekday") not in (None, ""):
+        if v["freq"] != "monthly":
+            raise PlanError(400, "recur.weekday needs freq monthly")
+        if v["weekday"] not in brief.WEEKDAYS:
+            raise PlanError(400, f"recur.weekday must be one of {', '.join(brief.WEEKDAYS)}")
+        week = v.get("week")
+        if week != "last" and (isinstance(week, bool) or week not in (1, 2, 3, 4)):
+            raise PlanError(400, "recur.week must be 'last' or 1 to 4")
+        out["weekday"], out["week"] = v["weekday"], week
+    elif v.get("week") not in (None, ""):
+        raise PlanError(400, "recur.week needs recur.weekday")
+    if v.get("until") not in (None, ""):
+        out["until"] = _day(v["until"], "recur.until")
+    if v.get("count") not in (None, ""):
+        out["count"] = _int_field(v["count"], "recur.count", 1)
+    return out
+
+
+def _day_list(v, what: str) -> list:
+    if not isinstance(v, list):
+        raise PlanError(400, f"{what} must be a list of days")
+    return sorted({_day(x, what) for x in v})
+
+
+def _merge_deadline(ctx: Ctx, stored: dict | None, req: dict, did: str) -> dict:
+    out = dict(stored) if stored else {"id": did}
+    for k, v in req.items():
+        if k == "id":
+            continue
+        if v is None or (v == "" and k in ("notes", "area")):
+            out.pop(k, None)
+            continue
+        if k == "title":
+            s = str(v).strip()
+            if not s:
+                raise PlanError(400, "deadline requires a title")
+            out[k] = s
+        elif k == "day":
+            out[k] = _day(v)
+        elif k == "area":
+            if str(v) not in ctx.area_ids:
+                raise PlanError(400, f"unknown area: {v!r}")
+            if str(v) in ctx.archived_ids and (stored or {}).get("area") != str(v):
+                raise PlanError(400, f"area archived: {v}")
+            out[k] = str(v)
+        elif k == "kind":
+            if v not in brief.KINDS:
+                raise PlanError(400, f"kind must be one of {', '.join(brief.KINDS)}")
+            out[k] = v
+        elif k == "priority":
+            if v not in brief.PRIORITIES:
+                raise PlanError(400, f"priority must be one of {', '.join(brief.PRIORITIES)}")
+            out[k] = v
+        elif k == "remind_days":
+            out[k] = _int_field(v, "remind_days", 0, brief.MAX_REMIND)
+        elif k == "recur":
+            if v:
+                out[k] = _recur(v)
+            else:
+                out.pop(k, None)
+        elif k == "done":
+            if not isinstance(v, bool):
+                raise PlanError(400, "done must be true or false")
+            if v:
+                out[k] = True
+            else:
+                out.pop(k, None)
+        elif k in ("done_on", "skips", "overrides"):
+            raise PlanError(400, f"{k} is set through deadline/done, deadline/move and deadline/delete")
+        elif k == "notes":
+            out[k] = str(v)
+        else:
+            raise PlanError(400, f"unknown field: {k}")
+    if not str(out.get("title") or "").strip():
+        raise PlanError(400, "deadline requires a title")
+    if not out.get("day"):
+        raise PlanError(400, "deadline requires a valid day (YYYY-MM-DD)")
+    r = out.get("recur")
+    if isinstance(r, dict) and r.get("weekday"):
+        if not brief.weekday_match(dt.date.fromisoformat(out["day"]), r):
+            raise PlanError(400, f"can't save {out['title']!r}: {out['day']} is not the {r['week']} {r['weekday']} of its month")
+    elif isinstance(r, dict) and r.get("freq") == "monthly" and dt.date.fromisoformat(out["day"]).day > brief.MAX_ANCHOR_DAY:
+        raise PlanError(400, f"can't save {out['title']!r}: monthly anchor day must be {brief.MAX_ANCHOR_DAY} or less")
+    if stored is None:
+        order = ["id", "title", "day", "kind", "priority", "remind_days", "area", "notes"]
+        out.setdefault("kind", "deadline")
+        out.setdefault("priority", "normal")
+        out = {**{k: out[k] for k in order if k in out}, **{k: v for k, v in out.items() if k not in order}}
+    return out
+
+
+def h_deadline(ctx: Ctx, body: dict):
+    req = body.get("deadline")
+    if not isinstance(req, dict):
+        raise PlanError(400, "deadline must be an object")
+    lst = ctx.s("deadlines")
+    did = str(req.get("id") or "").strip()
+    idx = _find(lst, "id", did) if did else None
+    if did and idx is None:
+        raise PlanError(404, f"unknown deadline: {did!r}")
+    if not did:
+        did = _new_id("dl", _ids(lst))
+    stored = lst[idx] if idx is not None else None
+    if stored is not None:
+        ctx.check(f"dl:{did}")
+    dl = _merge_deadline(ctx, stored, req, did)
+    if idx is None:
+        lst.append(dl)
+    else:
+        lst[idx] = dl
+    ctx.touched[f"dl:{did}"] = dl
+    return dl
+
+
+def _deadline_or_404(ctx: Ctx, body: dict):
+    did = _need(body, "id")
+    lst = ctx.s("deadlines")
+    idx = _find(lst, "id", did)
+    if idx is None:
+        raise PlanError(404, f"unknown deadline: {did!r}")
+    ctx.check(f"dl:{did}")
+    return lst, idx, did
+
+
+def _occurrence_key(dl: dict, body: dict, did: str, required: bool, allow_skipped: bool = False) -> str | None:
+    """The validated occurrence_key of a series, or None for the whole item / a one-off."""
+    raw = body.get("occurrence_key")
+    if raw in (None, ""):
+        if required and brief.is_series(dl):
+            raise PlanError(400, f"occurrence_key required for the repeating deadline {did!r}")
+        return None
+    key = _day(raw, "occurrence_key")
+    if not brief.is_series(dl):
+        raise PlanError(400, f"{did!r} is not a repeating deadline: no occurrence_key")
+    if not brief.is_occurrence(dl, key, allow_skipped=allow_skipped):
+        raise PlanError(400, f"{key} is not an occurrence of {did!r}")
+    return key
+
+
+def _set_or_drop(dl: dict, field: str, value) -> None:
+    if value:
+        dl[field] = value
+    else:
+        dl.pop(field, None)
+
+
+def h_deadline_done(ctx: Ctx, body: dict):
+    lst, idx, did = _deadline_or_404(ctx, body)
+    dl = dict(lst[idx])
+    key = _occurrence_key(dl, body, did, required=True)
+    if key is None:
+        dl["done"] = True
+    else:
+        dl["done_on"] = sorted(brief.strs(dl.get("done_on")) | {key})
+    lst[idx] = dl
+    ctx.touched[f"dl:{did}"] = dl
+    return dl
+
+
+def h_deadline_move(ctx: Ctx, body: dict):
+    lst, idx, did = _deadline_or_404(ctx, body)
+    dl = dict(lst[idx])
+    to = _day(body.get("to_day"), "to_day")
+    key = _occurrence_key(dl, body, did, required=True)
+    if key is None:
+        dl["day"] = to
+    else:
+        ov = dict(dl.get("overrides")) if isinstance(dl.get("overrides"), dict) else {}
+        if to == key:
+            ov.pop(key, None)
+        else:
+            ov[key] = {"day": to}
+        _set_or_drop(dl, "overrides", ov)
+    lst[idx] = dl
+    ctx.touched[f"dl:{did}"] = dl
+    return dl
+
+
+def h_deadline_delete(ctx: Ctx, body: dict):
+    lst, idx, did = _deadline_or_404(ctx, body)
+    dl = dict(lst[idx])
+    key = _occurrence_key(dl, body, did, required=False, allow_skipped=True)
+    if key is None:
+        lst.pop(idx)
+        ctx.removed.append(f"dl:{did}")
+        return dl
+    dl["skips"] = sorted(brief.strs(dl.get("skips")) | {key})
+    ov = dl.get("overrides") if isinstance(dl.get("overrides"), dict) else {}
+    _set_or_drop(dl, "overrides", {k: v for k, v in ov.items() if k != key})
+    _set_or_drop(dl, "done_on", sorted(brief.strs(dl.get("done_on")) - {key}))
+    lst[idx] = dl
+    ctx.touched[f"dl:{did}"] = dl
+    return dl
 
 
 # ── placements ─────────────────────────────────────────────────────────────────────────────────
@@ -947,6 +1207,10 @@ _ROUTES = {
     "/api/v2/plan/event/move": ("sched", h_event_move, False),
     "/api/v2/plan/event/skip": ("sched", h_event_skip, False),
     "/api/v2/plan/event/done": ("sched", h_event_done, False),
+    "/api/v2/plan/deadline": ("sched", h_deadline, False),
+    "/api/v2/plan/deadline/done": ("sched", h_deadline_done, False),
+    "/api/v2/plan/deadline/move": ("sched", h_deadline_move, False),
+    "/api/v2/plan/deadline/delete": ("sched", h_deadline_delete, False),
     "/api/v2/plan/placement/move": ("sched", h_placement_move, False),
     "/api/v2/plan/placement/delete": ("sched", h_placement_delete, False),
     "/api/v2/plan/placement/add": ("sched", h_placement_add, False),

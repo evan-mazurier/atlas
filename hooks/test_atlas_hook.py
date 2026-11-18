@@ -241,7 +241,7 @@ def test_rework_guard_enforce_denies_with_documented_json(env):
 def test_budget_zero_and_distinct_versions(env):
     env.bash(": team-type coding")
     env.edit("a.py")
-    # reviewer and senior-reviewer launched together both fail: one round burned
+    # reviewer and senior-reviewer launched together both fail: one round per tier (two tiers, contracts 1.2)
     env.agent("reviewer", "r1")
     env.run("SubagentStart", agent_id="A1", agent_type="reviewer")
     env.agent("senior-reviewer", "r2")
@@ -249,7 +249,8 @@ def test_budget_zero_and_distinct_versions(env):
     for aid, h, txt in (("A1", "reviewer", "NEEDS_CHANGES\n- x"), ("A2", "senior-reviewer", "NEEDS_CHANGES\n- y")):
         env.run("PreToolUse", tool_name="SubagentHandback", agent_id=aid, agent_type=h, tool_input={"message": txt})
         env.run("SubagentStop", agent_id=aid, agent_type=h, last_assistant_message="")
-    assert env.state()["needs_changes"] == 1
+    S = env.state()
+    assert S["needs_changes"] == 2 and S["nc_rounds_t"] == {"routine": 1, "senior": 1}
 
 
 def test_grant_rework_from_user_prompt(env):
@@ -994,3 +995,170 @@ def test_task_that_ended_ready_does_not_carry_its_count(env):
     env.bash(": team-type coding")
     assert not env.events("work_type")[-1].get("carried")
     assert env.state()["needs_changes"] == 0
+
+
+# ------------------------------------------------------------------ advisor helper (design notes, not in this copy §5, §6, §11)
+
+def advise(env, tuid, aid, text, label="unstick: stuck"):
+    """One advisor consult that hands back `text`."""
+    env.agent("advisor", tuid, label=label)
+    env.run("SubagentStart", agent_id=aid, agent_type="advisor")
+    env.run("PreToolUse", tool_name="SubagentHandback", agent_id=aid, agent_type="advisor", tool_input={"message": text})
+    env.run("SubagentStop", agent_id=aid, agent_type="advisor", last_assistant_message="")
+
+
+def test_advisor_spawn_allowed_with_open_task_in_enforce(env):
+    env.set_mode("enforce")
+    env.bash(": team-type coding")
+    assert env.agent("advisor", "a1", label="scope: big task") is None
+    assert [e["label"] for e in env.events("helper_start") if e["helper"] == "advisor"] == ["scope: big task"]
+    assert not [r for r in env.events("refusal") if r.get("tuid") == "a1"]
+
+
+def test_advisor_spawn_refused_during_quick_question(env):
+    env.bash(": team-type quick-question")
+    env.set_mode("enforce")
+    out = env.agent("advisor", "a1")
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert env.events("refusal")[-1]["guard"] == "quick_question"
+    assert env.agent("scout", "s1") is None
+
+
+def test_advisor_spawn_allowed_past_the_rework_budget(env):
+    trip(env)
+    env.set_mode("enforce")
+    assert env.agent("implementer", "b1")["hookSpecificOutput"]["permissionDecision"] == "deny"   # the budget is spent
+    assert env.agent("advisor", "a1", label="unstick: budget spent") is None
+    assert not [r for r in env.events("refusal") if r.get("tuid") == "a1"]
+
+
+def test_advisor_ready_first_line_is_no_verdict_and_never_opens_the_done_lock(env):
+    env.set_mode("enforce")
+    env.bash(": team-type coding")
+    env.edit("a.py")
+    advise(env, "a1", "AD1", "READY\nlooks fine")
+    assert not env.events("verdict") and env.events("helper_end")
+    out = env.bash(": team-done")
+    assert out["hookSpecificOutput"]["permissionDecisionReason"].startswith("Not closed: version 1 has no passing review")
+    assert not env.events("task_done")
+    assert env.state()["last_verified"] == 0
+
+
+def test_advisor_needs_changes_text_adds_no_round(env):
+    env.bash(": team-type coding")
+    env.edit("a.py")
+    advise(env, "a1", "AD1", "NEEDS CHANGES\n- one\n- two")
+    advise(env, "a2", "AD2", "NEEDS_CHANGES\n- three")
+    assert not env.events("verdict")
+    S = env.state()
+    assert S["needs_changes"] == 0 and S.get("nc_rounds", 0) == 0
+
+
+def test_fable_weight_in_the_hook_config_and_cost_capture(env, tmp_path):
+    assert ["fable", 4.0] in env.cfg["weights"]
+    proj = tmp_path / "proj"
+    sub = proj / SID / "subagents"
+    sub.mkdir(parents=True)
+    main = proj / f"{SID}.jsonl"
+    main.write_text(_line("m1", "q1", 5), encoding="utf-8")
+    (sub / "agent-AD1.jsonl").write_text(_line("h1", "r1", 50, model="claude-fable-5-2", side=True)
+                                         + _line("h2", "r2", 10, model="claude-some-future-model", side=True), encoding="utf-8")
+    (sub / "agent-AD1.meta.json").write_text(json.dumps({"agentType": "advisor"}))
+    env.bash(": team-type coding")
+    env.run("Stop", transcript_path=str(main))
+    by = {(c["scope"], c["model"]): c for c in env.events("cost")}
+    f = by[("AD1", "claude-fable-5-2")]
+    assert f["helper"] == "advisor" and f["weighted"] == int((10 + 50) * 4.0)
+    assert by[("AD1", "claude-some-future-model")]["weighted"] == 20      # an unknown model still weighs 1.0
+
+
+# ------------------------------------------------------------------ async (default background) launches
+
+ACK = {"isAsync": True, "status": "async_launched", "agentId": "X",
+       "content": [{"type": "text", "text": "Async agent launched successfully."}]}
+
+
+def _ack(env, tuid, helper, aid):
+    tr = dict(ACK, agentId=aid)
+    env.run("PostToolUse", tool_name="Agent", tool_use_id=tuid,
+            tool_input={"subagent_type": helper}, tool_response=tr)
+
+
+def _handback(env, aid, text, helper="reviewer"):
+    env.run("PreToolUse", tool_name="SubagentHandback", agent_id=aid, agent_type=helper,
+            tool_input={"message": text})
+    env.run("SubagentStop", agent_id=aid, agent_type=helper, last_assistant_message="")
+
+
+def test_async_ack_before_start_pairs_and_closes(env):
+    env.set_mode("enforce")
+    env.bash(": team-type coding")
+    env.edit("a.py")
+    env.agent("reviewer", "r1")
+    _ack(env, "r1", "reviewer", "A1")
+    env.run("SubagentStart", agent_id="A1", agent_type="reviewer")
+    p = [e for e in env.events("helper_paired") if e["agent_id"] == "A1"][0]
+    assert p["tuid"] == "r1"
+    assert env.state()["agents"]["A1"]["seq"] is not None
+    _handback(env, "A1", "NEEDS_CHANGES\n- x")
+    env.edit("a.py")
+    env.agent("reviewer", "r2")
+    _ack(env, "r2", "reviewer", "A2")
+    env.run("SubagentStart", agent_id="A2", agent_type="reviewer")
+    assert env.state()["agents"]["A2"]["seq"] is not None
+    _handback(env, "A2", "READY")
+    assert env.bash(": team-done") is None
+    assert env.events("task_done")
+
+
+def test_async_start_before_ack_still_pairs(env):
+    env.bash(": team-type coding")
+    env.edit("a.py")
+    env.agent("reviewer", "r1")
+    env.run("SubagentStart", agent_id="A1", agent_type="reviewer")
+    _ack(env, "r1", "reviewer", "A1")
+    p = [e for e in env.events("helper_paired") if e["agent_id"] == "A1"][0]
+    assert p["tuid"] == "r1"
+    assert env.state()["agents"]["A1"]["seq"] is not None
+    assert not env.events("verdict")
+
+
+def test_async_parallel_reviewers_acks_before_starts(env):
+    env.bash(": team-type coding")
+    env.edit("a.py")
+    env.agent("reviewer", "r1")
+    env.agent("reviewer", "r2")
+    _ack(env, "r1", "reviewer", "A")
+    _ack(env, "r2", "reviewer", "B")
+    env.run("SubagentStart", agent_id="A", agent_type="reviewer")
+    env.run("SubagentStart", agent_id="B", agent_type="reviewer")
+    S = env.state()
+    assert S["agents"]["A"]["seq"] is not None and S["agents"]["B"]["seq"] is not None
+    assert {e["agent_id"]: e["tuid"] for e in env.events("helper_paired")} == {"A": "r1", "B": "r2"}
+
+
+def test_async_ack_is_not_a_capture(env):
+    env.bash(": team-type coding")
+    env.edit("a.py")
+    env.agent("reviewer", "r1")
+    _ack(env, "r1", "reviewer", "A1")
+    assert not env.events("verdict")
+    assert "r1" in env.state()["pending"]
+    env.run("SubagentStart", agent_id="A1", agent_type="reviewer")
+    _handback(env, "A1", "NEEDS_CHANGES\n- x")
+    v = env.events("verdict")
+    assert len(v) == 1 and v[0]["verdict"] == "NEEDS_CHANGES" and v[0]["version"] == 1
+    assert "r1" not in env.state()["pending"]
+
+
+def test_foreground_stop_before_post_pops_and_captures(env):
+    env.bash(": team-type coding")
+    env.edit("a.py")
+    env.agent("reviewer", "r1")
+    env.run("SubagentStart", agent_id="A1", agent_type="reviewer")
+    env.run("SubagentStop", agent_id="A1", agent_type="reviewer", last_assistant_message="")
+    env.run("PostToolUse", tool_name="Agent", tool_use_id="r1", tool_input={"subagent_type": "reviewer"},
+            tool_response={"agentId": "A1", "content": [{"type": "text", "text": "READY"}]})
+    v = env.events("verdict")
+    assert len(v) == 1 and v[0]["verdict"] == "READY" and v[0]["version"] == 1
+    assert "r1" not in env.state()["pending"]

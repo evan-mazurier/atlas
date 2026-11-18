@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import sys
 import threading
 from pathlib import Path
 
 try:
-    from . import query, stats
+    from . import query, report_summary, stats
 except ImportError:  # pragma: no cover
     import query  # type: ignore
+    import report_summary  # type: ignore
     import stats  # type: ignore
 
 PREFIX = "/api/v2/ledger/"
@@ -108,7 +110,13 @@ def get(path: str, query_: dict | None = None):
             p = _reports_dir() / f"{label}.md"
             if not p.is_file():
                 return _err(404, f"no saved report for {label}")
-            return 200, {"ok": True, "path": str(p), "markdown": p.read_text(encoding="utf-8", errors="replace")}
+            md = p.read_text(encoding="utf-8", errors="replace")
+            data = None
+            try:
+                data = json.loads(p.with_suffix(".json").read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001  (missing or malformed numbers file: no kpis)
+                data = None
+            return 200, {"ok": True, "path": str(p), "markdown": md, "summary": report_summary.build_summary(md, data)}
     except ValueError as e:
         return _err(400, str(e))
     return None

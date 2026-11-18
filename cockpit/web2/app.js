@@ -4,11 +4,12 @@ import * as kit from "./kit/charts.js";
 import * as ui from "./kit/ui.js";
 
 const ROUTES = [
+  { id: "brief", title: "Brief", key: "b", load: () => import("./screens/brief.js") },
   { id: "plan", title: "Plan", key: "p", load: () => import("./screens/plan.js") },
   { id: "team", title: "Team", key: "t", load: () => import("./screens/team.js") },
   { id: "ledger", title: "Ledger", key: "l", load: () => import("./screens/ledger.js") },
 ];
-const DEFAULT_ROUTE = "plan";
+const DEFAULT_ROUTE = "brief";
 
 /* ---------- api ---------- */
 async function request(path, opts) {

@@ -21,7 +21,7 @@ LOCK_TRIES = 60          # x 50 ms = ~3 s before proceeding without the lock
 CHAIN_WINDOW = 8         # verify_chain accepts a prev equal to the hash of any of the previous 8 lines
 
 # price weights, same table as cockpit/core/usage.py (copied, contracts §1.5)
-DEFAULT_WEIGHTS = [["haiku-5", 0.05], ["haiku", 0.5], ["opus", 2.0], ["sonnet", 1.0]]
+DEFAULT_WEIGHTS = [["haiku-5", 0.05], ["haiku", 0.5], ["opus", 2.0], ["sonnet", 1.0], ["fable", 4.0]]
 HAIKU5_TIER_PROMPT = 100_000
 HAIKU5_HIGH = 0.25
 
@@ -42,7 +42,7 @@ def model_weight(model, prompt_tokens=0, weights=None) -> float:
 
 def tier(model) -> str:
     m = (model or "").lower()
-    for t in ("opus", "sonnet", "haiku"):
+    for t in ("opus", "sonnet", "haiku", "fable"):
         if t in m:
             return t
     return "sonnet"

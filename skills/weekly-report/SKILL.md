@@ -1,6 +1,6 @@
 ---
 name: weekly-report
-description: Weekly report from the Atlas ledger. Runs the numbers, then writes three lessons, three concrete changes and 1-3 post ideas. Proposes only; the operator decides and writes any post.
+description: Weekly report from the Atlas ledger. Runs the numbers, then writes three lessons, a scoreboard of earlier changes, 0-3 new changes and 1-3 post ideas. Proposes only; the operator decides and writes any post.
 argument-hint: "[YYYY-Www]"
 ---
 
@@ -16,15 +16,21 @@ This is a playbook (area atlas): no `: team-type` declaration is needed.
    those lines. Never touch the block between `<!-- numbers:start -->` and `<!-- numbers:end -->`; re-running
    the script refreshes that block and keeps your text.
    - **Lessons: three observations.** Each one a plain sentence plus the number that shows it. Prefer the
-     waste signals (the orchestrator doing helper-sized work, undeclared tasks, reruns, cache reuse), first-pass READY,
-     what the gates caught, and budget refusals (enforced vs would).
-   - **Three changes.** Concrete and small: a prompt edit, a skill edit, or a routing change (which type or
-     model takes which work). Each names the file or setting to change and the number it should move.
-     These are proposals: do not apply any of them.
+     waste signals (the orchestrator doing helper-sized work, undeclared tasks, reruns, cache reuse), first-pass READY
+     by type (writing first) and rework rounds per closed task (the overall first-pass number moves with the mix of
+     work, so never read it alone), what the gates caught, and budget refusals (enforced vs would).
+   - **Earlier changes first.** Read the "Three changes" sections of the previous weekly reports, and any
+     `~/.atlas/reports/*-review.md`. Open the changes section with a table: change, week proposed, live since (check
+     git log or the file), target, this week's number, status (worked, missed, partial, no data). A change stays at
+     no data until it has had at least one full week of matching work.
+   - **Changes (0 to 3).** Propose a new behaviour change (hook, rule, prompt, skill or routing) only when no earlier
+     change is still at no data, and never one that is already live (check the file first). Measurement changes (the
+     report script, a review) are always allowed. Each change names the file or setting to change and the number it
+     should move. These are proposals: do not apply any of them.
    - **Post ideas (1 to 3).** LinkedIn angles with the numbers behind them. Numbers only: never client
      names, company names, prices charged, or anything from a client's work. The operator writes the post.
 4. Show the operator the finished report (the `.md` content), lead with the single most important finding, and ask
-   which of the three changes the operator wants. Wait for the operator's answer.
+   which of the proposed changes the operator wants. Wait for the operator's answer.
 
 Rules: it proposes, the operator decides. Never publish, post, send or schedule anything. Never write to the ledger.
 No em-dashes in the post ideas.

@@ -230,12 +230,36 @@ def nc_count(S):
     return S.get("carried_nc", 0) + int(S.get("nc_rounds") or 0)
 
 
-def nc_round(S, seq):
-    """Does a NEEDS CHANGES verdict from a reviewer with launch number `seq` count as a new round? Yes when it is the
-    task's first, when the reviewer was launched after the previous failing review arrived (`nc_at`), or when the
-    launch is unknown (the strict side). Reviewers launched together before a failing review arrives count once."""
-    nc_at = S.get("nc_at", 0)
-    return nc_count(S) == 0 or nc_at == 0 or seq is None or seq > nc_at
+TIERS = ("senior", "routine")
+BUILDER_RESET = ("implementer", "drafter")      # a launch of one of these restarts the main-session edit stop
+MAIN_EDIT_STOP = 6                              # main-session edits since the last builder launch before the stop
+
+
+def reviewer_tier(helper):
+    """The rework tier of a reviewer: `senior` = senior-reviewer, `routine` = every other reviewer (contracts §6.3)."""
+    return "senior" if str(helper or "").strip().lower() == "senior-reviewer" else "routine"
+
+
+def tier_rounds(S, tier):
+    """This task's own NEEDS CHANGES rounds counted for one reviewer tier."""
+    return int((S.get("nc_rounds_t") or {}).get(tier) or 0)
+
+
+def set_nc_at(S, tier=None):
+    """A failing review arrived now: remember it for the tier (all tiers when the tier is unknown)."""
+    S["nc_at"] = S.get("spawn_seq", 0)
+    at = S.setdefault("nc_at_t", {})
+    for t in ((tier,) if tier else TIERS):
+        at[t] = S.get("spawn_seq", 0)
+
+
+def nc_round(S, seq, tier="routine"):
+    """Does a NEEDS CHANGES verdict from a reviewer of `tier` with launch number `seq` count as a new round? Yes when
+    it is the tier's first, when the reviewer was launched after that tier's previous failing review arrived
+    (`nc_at_t`), or when the launch is unknown (the strict side). Reviewers launched together before a failing review
+    arrives count once."""
+    nc_at = (S.get("nc_at_t") or {}).get(tier, 0)
+    return S.get("carried_nc", 0) + tier_rounds(S, tier) == 0 or nc_at == 0 or seq is None or seq > nc_at
 
 
 class Ctx:
@@ -366,9 +390,11 @@ class LockBusy(Exception):
 class Txn:
     """read state -> emit events -> write state, all under the ledger's append lock (contracts §1)."""
 
-    def __init__(self, H, tries=60, strict=False, light=False):
+    def __init__(self, H, tries=60, strict=False, light=False, migrate=True):
         """tries x 50 ms = how long to wait for the lock; strict = raise LockBusy instead of going on without it;
-        light = never rebuild a missing state cache (a fresh, unsaved state is used) and skip the tamper check."""
+        light = never rebuild a MISSING state cache (a fresh, unsaved state is used) and skip the tamper check; a cached
+        old-format state is still migrated (replay of the ledger) so a saving light path never reads it as zero rounds;
+        migrate=False (for the light paths that never save: the refusal-logging Txns and the config gate's allowed path) skips that replay."""
         self.H = H
         self.events = []
         self.fh = None
@@ -377,6 +403,7 @@ class Txn:
         self.tries = tries
         self.strict = strict
         self.light = light
+        self.migrate = migrate
         self.nosave = False
 
     # lock ---------------------------------------------------------
@@ -403,8 +430,13 @@ class Txn:
         if self.light:
             S = cached_state(H)
             self.nosave = S is None
-            self.state = fresh_state(H.sid)
-            if S is not None:
+            if S is None:
+                self.state = fresh_state(H.sid)
+            elif self.migrate:
+                self.state = migrate_old_state(H, S)
+            else:                                       # read-only use (refusal log): no ledger replay under the hook timeout
+                self.nosave = True                      # an unmigrated state is never saved
+                self.state = fresh_state(H.sid)
                 self.state.update(S)
             prune_pending(self.state)
             return self
@@ -555,6 +587,7 @@ def state_path(H):
 def fresh_state(sid):
     return {"sid": sid, "task": None, "n": 0, "type": None, "area": None, "open": False, "needs_check": True,
             "version": 0, "last_verified": 0, "other_v": 0, "edits": 0, "main_edits": 0, "nc_rounds": 0,
+            "nc_rounds_t": {}, "nc_at_t": {}, "builder_edits": 0, "ord_n": 0, "impl_ret": None, "tr_launch": 0,
             "carried_nc": 0, "needs_changes": 0, "tuid_aid": {}, "budget": None, "escalated": False, "granted": 0, "pending": {},
             "agents": {}, "captured": [], "ended_ids": [], "sent_back_for": None, "playbook_last": None,
             "task_t": None, "spawns": 0, "reminded": None, "plan_ref": None, "plan_auto": False, "last_verdict": None,
@@ -611,12 +644,28 @@ def rebuild_state(H):
     return S
 
 
+def migrate_old_state(H, S):
+    """S = a cached state file laid over fresh_state. A file written by the single-tier hook has no nc_rounds_t:
+    re-derive the tiers by replaying the ledger (same task id), else keep the old total as routine rounds.
+    Used by load_state and the light transaction, so no path reads an old file as zero rounds."""
+    base = fresh_state(H.sid)
+    base.update(S)
+    if "nc_rounds_t" not in S:
+        try:
+            rebuilt = rebuild_state(H)                    # replays events only; never calls load_state
+            if rebuilt.get("task") == base.get("task"):
+                return rebuilt
+        except Exception:  # noqa: BLE001
+            pass
+        base["nc_rounds_t"] = {"routine": int(base.get("nc_rounds") or 0)}   # fallback: keep the old total
+        base["nc_at_t"] = {t: int(base.get("nc_at") or 0) for t in TIERS}
+    return base
+
+
 def load_state(H):
     S = _load_json(state_path(H), None)
     if isinstance(S, dict) and S.get("sid") == H.sid:
-        base = fresh_state(H.sid)
-        base.update(S)
-        return base
+        return migrate_old_state(H, S)
     try:
         return rebuild_state(H)
     except Exception:  # noqa: BLE001
@@ -646,19 +695,21 @@ def apply_event(S, e, wf):
         except Exception:  # noqa: BLE001
             S["n"] = S.get("n", 0) + 1
         S.update(type=typ, area=e.get("area"), open=True, version=0, last_verified=0, other_v=0, edits=0, main_edits=0,
-                 sent_back_for=None, needs_check=info["needs_check"], task_t=e.get("t"), spawns=0, reminded=None,
+                 builder_edits=0, impl_ret=None, tr_launch=0, sent_back_for=None, needs_check=info["needs_check"], task_t=e.get("t"), spawns=0, reminded=None,
                  plan_ref=e.get("plan_ref"), plan_auto=bool(e.get("plan_auto")), last_verdict=None, last_verdict_seq=None)
         if e.get("carried"):
             S["carried_nc"] = nc_count(S)
             S["nc_rounds"] = 0
+            S["nc_rounds_t"] = {}
             S["budget"] = min_budget(S.get("budget"), info["budget"])
             S["chained"] = True                           # a carry is its own chain link
         else:
-            S.update(nc_rounds=0, carried_nc=0, escalated=False, granted=0, budget=info["budget"], nc_at=0,
+            S.update(nc_rounds=0, nc_rounds_t={}, nc_at_t={}, carried_nc=0, escalated=False, granted=0,
+                     budget=info["budget"], nc_at=0,
                      chained=bool(S.get("chain_next")) or was_chained, chain_next=False)
         if S.get("late_nc") or S.get("late_esc"):         # late verdicts that arrived with no task open count here
             S["carried_nc"] = int(S.get("carried_nc") or 0) + int(S.get("late_nc") or 0)
-            S["nc_at"] = S.get("spawn_seq", 0)
+            set_nc_at(S)
             S["chained"] = True
             S["escalated"] = bool(S.get("escalated")) or bool(S.get("late_esc"))
             S["late_nc"], S["late_esc"] = 0, False
@@ -673,6 +724,7 @@ def apply_event(S, e, wf):
             S["edits"] += 1
             if not e.get("agent_id"):
                 S["main_edits"] = int(S.get("main_edits") or 0) + 1
+                S["builder_edits"] = int(S.get("builder_edits") or 0) + 1
             if os.path.basename(str(e.get("path") or "")).lower() not in CHECK_FILES:
                 S["other_v"] = S["version"]
     elif ev == "task_abandoned":
@@ -692,7 +744,7 @@ def apply_event(S, e, wf):
                 else:
                     if e["verdict"] == "NEEDS_CHANGES":
                         S["carried_nc"] = int(S.get("carried_nc") or 0) + 1
-                        S["nc_at"] = S.get("spawn_seq", 0)
+                        set_nc_at(S, reviewer_tier(e.get("helper")))
                         S["chained"] = True
                     else:
                         S["escalated"] = True
@@ -702,10 +754,13 @@ def apply_event(S, e, wf):
             who = (S["agents"].get(key) or S["agents"].get(S["tuid_aid"].get(key)) or S["pending"].get(key) or {})
             S["last_verdict"], S["last_verdict_seq"] = v, who.get("seq")
             if v == "NEEDS_CHANGES":
-                rnd = e["round"] if "round" in e else nc_round(S, who.get("seq"))
+                tier = reviewer_tier(e.get("helper") or who.get("helper"))
+                rnd = e["round"] if "round" in e else nc_round(S, who.get("seq"), tier)
                 if rnd:
                     S["nc_rounds"] = int(S.get("nc_rounds") or 0) + 1
-                S["nc_at"] = S.get("spawn_seq", 0)
+                    rt = S.setdefault("nc_rounds_t", {})
+                    rt[tier] = int(rt.get(tier) or 0) + 1
+                set_nc_at(S, tier)
             if v == "READY":
                 if ver is not None:      # unknown version never satisfies the done-lock
                     S["last_verified"] = max(S["last_verified"], int(ver))
@@ -720,8 +775,14 @@ def apply_event(S, e, wf):
     elif ev == "reminder":
         S["reminded"] = e.get("task")
     elif ev == "helper_start":
+        S["ord_n"] = int(S.get("ord_n") or 0) + 1       # one monotonic order for launches and returns (contracts §6.9a)
         if e.get("task") == S.get("task"):
             S["spawns"] = S.get("spawns", 0) + 1
+            hn = str(e.get("helper") or "").lower()
+            if hn in BUILDER_RESET:
+                S["builder_edits"] = 0                  # contracts §6.9: the main-session edit stop restarts here
+            elif hn == "test-runner":
+                S["tr_launch"] = S["ord_n"]
         S["spawn_seq"] = S.get("spawn_seq", 0) + 1
         S["pending"][e.get("tuid") or ("h%d" % len(S["pending"]))] = {"seq": S["spawn_seq"],
             "helper": e.get("helper"), "version": int(e.get("version") or 0), "t": e.get("t"),
@@ -759,6 +820,9 @@ def apply_event(S, e, wf):
             while len(S[k]) > 200:
                 S[k].pop(next(iter(S[k])))
     elif ev == "helper_end":
+        S["ord_n"] = int(S.get("ord_n") or 0) + 1
+        if e.get("task") == S.get("task") and str(e.get("helper") or "").lower() == "implementer":
+            S["impl_ret"] = S["ord_n"]
         aid = e.get("agent_id")
         if aid and aid not in S["ended_ids"]:
             S["ended_ids"].append(aid)
@@ -810,7 +874,10 @@ def tripped(S):
         return False
     if S.get("escalated"):
         return True
-    return b is not None and nc_count(S) > b + S.get("granted", 0)
+    if b is None:
+        return False
+    # per reviewer tier (contracts §6.3): rounds carried over count against each tier
+    return any(int(S.get("carried_nc") or 0) + tier_rounds(S, t) > b + S.get("granted", 0) for t in TIERS)
 
 
 # ------------------------------------------------------------------ patterns
@@ -1069,13 +1136,14 @@ def _join_quoted_newlines(text):
     return text if q is not None else "".join(out)
 
 
-def forged_grant_name(cmd):
+def _forged_grant_name_one(cmd, join=_join_quoted_newlines):
     """The user-only command (/allow-config, /allow-publish, /grant-rework, /ack-break) that a command tries to hand
     to a spawned claude, else None. Read on the quote-free text and again with backticks removed (cla''ude, "/allow-con""fig",
     PowerShell's escape). Two shapes: claude with -p/--print/--resume, or an interactive claude given a user-only
     command in the same segment (a mention in a git message, echo or grep is not a launch). Honest limit: a command built
-    at run time through a variable ($a='/allow-config'; Start-Process claude $a) is not seen. Linear."""
-    text = _join_quoted_newlines(_strip_data_heredocs(cmd))
+    at run time through a variable ($a='/allow-config'; Start-Process claude $a) is not seen. Linear.
+    One reading (main's): `join` is the newline join; the default is main's, the union wrappers below pass a no-op."""
+    text = join(_strip_data_heredocs(cmd))
     subst = _has_subst(text)
     norm = _normalise(text)
     for f in _claude_forms(norm):
@@ -1121,13 +1189,14 @@ def _claude_info_only(args):
            (len(toks) == 3 and toks[0] == "mcp" and toks[1] == "get" and not toks[2].startswith("-"))
 
 
-def claude_shell_launch(cmd):
+def _claude_shell_launch_one(cmd, join=_join_quoted_newlines):
     """True when a shell command starts claude (by name or path, at a program position: not as an argument of
     echo/grep/git or a lookup such as `which`) with anything but an info subcommand. A claude started from the Bash tool
     is always headless and inherits the desktop entry, so a prompt fed through stdin, an argument or a heredoc would be
     read as typed by the operator: no session may start one. Read like forged_grant_name (data heredocs cut, quotes removed, and
-    again without backticks). Honest limit: claude reached through a variable or a file prepared earlier is not seen."""
-    text = _join_quoted_newlines(_strip_data_heredocs(cmd))
+    again without backticks). Honest limit: claude reached through a variable or a file prepared earlier is not seen.
+    One reading (main's): `join` is the newline join; the default is main's, the union wrappers below pass a no-op."""
+    text = join(_strip_data_heredocs(cmd))
     subst = _has_subst(text)
     for f in _claude_forms(_normalise(text)):
         for seg in SEGMENT_SPLIT_RE.split(f):
@@ -1140,6 +1209,117 @@ def claude_shell_launch(cmd):
             if not _claude_info_only(seg[min(m.end() for m in ms):].strip().rstrip(")")):
                 return True
     return False
+
+
+# ---- union of readings (contracts: "No claude from a shell", 2026-11-03). Reading A is main's pipeline, unchanged.
+# Extra readings run only when the raw text holds a risky trigger, so the guard can only deny MORE than main.
+_CURLY_QUOTES = "‘’‚‛“”„"
+_CURLY_TO_ASCII = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'",
+                                 "“": '"', "”": '"', "„": '"'})
+
+
+def _no_join(text):
+    return text
+
+
+def _risky_quoting(cmd):
+    """True when bash and PowerShell may read the quotes of this text differently: a `#` outside quotes (a plain scan of
+    `'` and `"`; a `#` inside a quoted string is text, as in `git commit -m "x # y"`, and any text where that scan could be
+    wrong holds one of the next triggers), a typographic quote, `$'`, a backslash right before a quote, or an odd count
+    of `'` or `"`."""
+    if ("$'" in cmd or "\\\"" in cmd or "\\'" in cmd or cmd.count("'") % 2 == 1 or cmd.count('"') % 2 == 1
+            or any(q in cmd for q in _CURLY_QUOTES)):
+        return True
+    if "#" not in cmd:
+        return False
+    q = None
+    for c in cmd:
+        if q is None:
+            if c == "#":
+                return True
+            if c in "'\"":
+                q = c
+        elif c == q:
+            q = None
+    return False
+
+
+def _join_forced(text):
+    """Main's newline join without its bail-outs (a backslash before a quote and `$'` leave main's join off): the reading
+    where a `\\'` or `\\"` is plain text inside the string, so a launch after the closing quote is seen. An unclosed quote
+    still returns the text unchanged. Used only as an extra reading (it can only add denials)."""
+    if "\n" not in text or ('"' not in text and "'" not in text):
+        return text
+    out, q, comment, prev = [], None, False, "\n"
+    for c in text:
+        if comment:
+            comment = c != "\n"
+        elif q is None:
+            if c == "#" and prev in " \t\n;&|(":
+                comment = True
+            elif c in "'\"" and prev != "\\":
+                q = c
+        else:
+            if c == q and not (q == '"' and prev == "\\"):
+                q = None
+            elif c in "\r\n":
+                c = " "
+        out.append(c)
+        prev = c
+    return text if q is not None else "".join(out)
+
+
+def _extra_readings(cmd):
+    """The (text, join) pairs read besides reading A: B = raw text, no join; C = typographic quotes mapped to ASCII, main's
+    join; D = C without the join; E = the raw text and the mapped text with the forced join (`_join_forced`);
+    F = any `!` in the text: the text (and the mapped text, when C applies) with every `!` replaced by a space, main's
+    join (`git -c alias.z="!claude -p y" z`). F is independent of the quoting trigger. (C, D and E also see the mapped
+    text in _has_subst.) Empty when nothing in the text is risky and it holds no `!`."""
+    out = []
+    mapped = cmd
+    if _risky_quoting(cmd):
+        out += [(cmd, _no_join), (cmd, _join_forced)]
+        mapped = cmd.translate(_CURLY_TO_ASCII)
+        if mapped != cmd:
+            out += [(mapped, _join_quoted_newlines), (mapped, _no_join), (mapped, _join_forced)]
+    if "!" in cmd:
+        out.append((cmd.replace("!", " "), _join_quoted_newlines))
+        if mapped != cmd and "!" in mapped:
+            out.append((mapped.replace("!", " "), _join_quoted_newlines))
+    return out
+
+
+def claude_shell_launch(cmd):
+    """True when reading A (main's, `_claude_shell_launch_one`) or any extra reading (`_extra_readings`) says launch.
+    Over PUBLISH_MAX_CHARS only A runs (main's answer, main's timing). An extra reading that raises is a launch (fail closed);
+    A stays outside the try, so it behaves exactly as on main."""
+    if _claude_shell_launch_one(cmd):
+        return True
+    if len(cmd) > PUBLISH_MAX_CHARS:
+        return False
+    try:
+        return any(_claude_shell_launch_one(t, j) for t, j in _extra_readings(cmd))
+    except Exception:  # noqa: BLE001 - a bug in an extra reading must not open the door
+        return True
+
+
+def forged_grant_name(cmd):
+    """The first user-only command name found by reading A, then by the extra readings in order, else None.
+    Over PUBLISH_MAX_CHARS only A runs. An extra reading that raises returns the sentinel name "a user-only command"
+    (A's name is returned first), so the entry denies through the forged branch even when launch detection says False."""
+    name = _forged_grant_name_one(cmd)
+    if name:
+        return name
+    if len(cmd) > PUBLISH_MAX_CHARS:
+        return None
+    try:
+        for t, j in _extra_readings(cmd):
+            name = _forged_grant_name_one(t, j)
+            if name:
+                return name
+    except Exception:  # noqa: BLE001 - a bug in an extra reading must not open the door
+        return "a user-only command"
+    return None
 
 
 def forged_grant(cmd):
@@ -2785,7 +2965,7 @@ def publish_gate(H, whats):
             except BaseException:  # noqa: BLE001 - lock busy or log unwritable: deny
                 log_error()
     try:
-        with Txn(H, tries=PUBLISH_LOG_TRIES, light=True) as tx:
+        with Txn(H, tries=PUBLISH_LOG_TRIES, light=True, migrate=False) as tx:
             tx.nosave = True                    # the refusal changes nothing in state: never write the cache here
             if not_in_ledger:
                 tx.emit({"ev": "ignored", "what": "grant not in ledger"})
@@ -2938,7 +3118,7 @@ def config_gate(H, path=None, what=None):
             not_in_ledger = True
         else:
             try:
-                with Txn(H, tries=CONFIG_LOCK_TRIES, strict=True, light=True) as tx:
+                with Txn(H, tries=CONFIG_LOCK_TRIES, strict=True, light=True, migrate=False) as tx:
                     if config_grant_open(tx.state):
                         tx.nosave = True             # an allowed change changes nothing in state: never write the cache here
                         tx.emit(dict({"ev": "config_allowed", "tool": H.tool}, **target))
@@ -2946,7 +3126,7 @@ def config_gate(H, path=None, what=None):
             except BaseException:  # noqa: BLE001 - lock busy or log unwritable: deny
                 log_error()
     try:
-        with Txn(H, tries=CONFIG_LOG_TRIES, light=True) as tx:
+        with Txn(H, tries=CONFIG_LOG_TRIES, light=True, migrate=False) as tx:
             tx.nosave = True
             if not_in_ledger:
                 tx.emit({"ev": "ignored", "what": "grant not in ledger"})
@@ -3422,14 +3602,35 @@ def h_pre_agent(H):
             why = None
         if why:
             tx.emit({"ev": "reminder", "task": S["task"], "why": why})
+        runner_note = None
+        try:
+            runner_note = test_runner_reminder(H, S, helper)
+        except Exception:  # noqa: BLE001 - a reminder never blocks
+            runner_note = None
         tx.emit({"ev": "helper_start", "task": S["task"], "tuid": H.d.get("tool_use_id") or "t%d" % int(time.time()),
                  "helper": helper, "label": str(H.ti.get("description") or "")[:60],
                  "bg": bool(H.ti.get("run_in_background")), "version": S["version"]})
+    notes = []
     if why:
-        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": (
-            "This task %s. If this is a new piece of work, declare it: "
-            "`: team-type <type> [area]` (same type is fine)." % why)}}
+        notes.append("This task %s. If this is a new piece of work, declare it: "
+                     "`: team-type <type> [area]` (same type is fine)." % why)
+    if runner_note:
+        notes.append(runner_note)
+    if notes:
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": " ".join(notes)}}
     return None
+
+
+def test_runner_reminder(H, S, helper):
+    """Contracts §6.9a: a reviewer (either tier) launched on a coding task after an implementer returned, with no
+    test-runner launched since that return, gets a one-line reminder (context only, never a deny). None otherwise."""
+    if H.agent_id or helper not in H.reviewers or S.get("type") != "coding" or not S.get("open"):
+        return None
+    ret = S.get("impl_ret")
+    if ret is None or int(S.get("tr_launch") or 0) > int(ret):
+        return None
+    return ("Reminder: an implementer returned on this task and no test-runner has run since. Run the full suite "
+            "with test-runner before the review.")
 
 
 def edit_path(H):
@@ -3467,6 +3668,16 @@ def h_pre_edit(H):
                           "(: team-type coding|writing|chore ...).")
         if not H.agent_id and tripped(S):
             return refuse(H, tx, "rework", rework_msg(S))
+        try:
+            stop = (not H.agent_id and S["open"] and not memory_path(path)
+                    and int(S.get("builder_edits") or 0) >= MAIN_EDIT_STOP
+                    and crew_has_builder(H, S, BUILDER_RESET))
+        except Exception:  # noqa: BLE001 - fails open
+            stop = False
+        if stop:
+            return refuse(H, tx, "edit_limit",
+                          "Main-session edit limit reached on this task (%d since the last builder): hand the rest "
+                          "to implementer or drafter." % MAIN_EDIT_STOP)
     return None
 
 
@@ -3517,6 +3728,41 @@ def _ordinal(n):
     return "%d%s" % (n, "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th"))
 
 
+def crew_has_builder(H, S, names=None):
+    """False when the task type's crew has no builder (then neither the 3-edit reminder nor the 6-edit stop apply)."""
+    typ = S.get("type")
+    if typ != "undeclared":            # its real type is unknown: a builder is assumed
+        t = (H.wf.get("types") or {}).get(typ)
+        if typ == "playbook":          # the playbook's own crew; S["playbook_last"] is set by every playbook open
+            pb = (S.get("playbook_last") or {}).get("cmd")
+            spec = (H.wf.get("playbook_crews") or {}).get(pb) if pb else None
+            t = spec if isinstance(spec, dict) else None
+        crew = t.get("crew") if isinstance(t, dict) else None
+        if isinstance(crew, list) and not ({str(x).lower() for x in crew} & set(names if names is not None else H.builders)):
+            return False
+    return True
+
+
+def memory_path(p):
+    """A Claude memory file: under ~/<dot-claude>/projects/<project>/memory/ (any form of the path). Never counted as
+    a main-session edit (contracts §6.9)."""
+    root = os.path.join(os.path.expanduser("~"), ".cl" + "aude", "projects")
+    forms = match_forms(p)
+    if not forms:
+        return False
+    for f in forms:
+        if not under_forms([f], root):
+            return False
+        parts = [x.lower() for x in re.split(r"[\\/]+", f) if x]
+        # `memory` must sit directly after projects/<project>/ (a project folder named memory, or a memory folder
+        # deeper down, is not a memory path)
+        if not any((c == ".claude" or _SHORT_DIR_RE.fullmatch(c)) and parts[i + 1:i + 2] == ["projects"]
+                   and parts[i + 3:i + 4] == ["memory"] and len(parts) > i + 4
+                   for i, c in enumerate(parts)):
+            return False
+    return True
+
+
 def edit_nudge(H, S):
     """3-edit rule reminder text for the main session's every 3rd edit on a task, or None. Reminder only; fails open."""
     try:
@@ -3525,16 +3771,8 @@ def edit_nudge(H, S):
         n = int(S.get("main_edits") or 0)
         if n < 3 or n % 3:
             return None
-        typ = S.get("type")
-        if typ != "undeclared":            # its real type is unknown: always reminded
-            t = (H.wf.get("types") or {}).get(typ)
-            if typ == "playbook":          # the playbook's own crew; S["playbook_last"] is set by every playbook open
-                pb = (S.get("playbook_last") or {}).get("cmd")
-                spec = (H.wf.get("playbook_crews") or {}).get(pb) if pb else None
-                t = spec if isinstance(spec, dict) else None
-            crew = t.get("crew") if isinstance(t, dict) else None
-            if isinstance(crew, list) and not ({str(x).lower() for x in crew} & set(H.builders)):
-                return None
+        if not crew_has_builder(H, S):
+            return None
         return ("3-edit rule: this is the main session's %s edit on this task. Brief implementer (code) or drafter "
                 "(text) with the rest, unless the change is tiny or a hard case." % _ordinal(n))
     except Exception:  # noqa: BLE001
@@ -3555,7 +3793,7 @@ def h_post_edit(H):
     except Exception:  # noqa: BLE001
         is_cfg = True
     # a config path is never exempt, even under ~/.claude, atlas-data or temp; the protected folders stay exempt
-    exempt = H.is_protected(path) or (H.is_exempt(path) and not is_cfg)
+    exempt = H.is_protected(path) or ((H.is_exempt(path) or memory_path(path)) and not is_cfg)
     if exempt and check is None:
         return None
     out = None
@@ -3633,7 +3871,7 @@ def capture_verdict(H, tx, aid, helper, text, tuid=None):
         ev["counted_on"] = S["task"] if S["open"] else "next"      # a late verdict always counts (contracts §1.2)
     elif verdict == "NEEDS_CHANGES":
         who = S["agents"].get(key) or S["agents"].get(S["tuid_aid"].get(key)) or S["pending"].get(key) or {}
-        ev["round"] = bool(nc_round(S, who.get("seq")))       # decided here, recorded for derive (contracts §1.2)
+        ev["round"] = bool(nc_round(S, who.get("seq"), reviewer_tier(helper)))       # decided here, recorded for derive (contracts §1.2)
     tx.emit(ev)
 
 
@@ -3657,9 +3895,15 @@ def h_post_agent(H):
         S = tx.state
         if aid is None and tuid in S["pending"]:
             aid = S["pending"][tuid].get("agent_id")
-        if helper in H.reviewers and not H.ti.get("run_in_background"):
-            capture_verdict(H, tx, aid, helper, _response_text(tr), tuid)
-        if not H.ti.get("run_in_background") and tuid in S["pending"]:
+        # A background launch (explicit, or the default) answers at once with an async acknowledgement.
+        # Release the pending entry and capture a verdict only when the launch has really finished;
+        # otherwise SubagentStart still has to pair it and the verdict comes from handback/stop.
+        pend_aid = (S["pending"].get(tuid) or {}).get("agent_id")
+        acked = isinstance(tr, dict) and (tr.get("status") == "async_launched" or tr.get("isAsync") is True)
+        running = acked or (pend_aid is not None and pend_aid not in S["ended_ids"])
+        if not H.ti.get("run_in_background") and not running:
+            if helper in H.reviewers:
+                capture_verdict(H, tx, aid, helper, _response_text(tr), tuid)
             S["pending"].pop(tuid, None)
     return None
 

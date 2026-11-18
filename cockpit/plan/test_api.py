@@ -111,13 +111,13 @@ def test_event_create_assigns_id_and_persists(api, env):
 
 
 def test_event_merge_null_removes_and_unknown_fields_survive(api, env):
-    ev, v = create_event(api, notes="n1", location="Paris", remind=15, busy=False, wibble={"a": 1})
+    ev, v = create_event(api, notes="n1", location="Lyon", remind=15, busy=False, wibble={"a": 1})
     eid = ev["id"]
     code, out = api.post("event", {"base": v, "event": {"id": eid, "title": "Renamed", "notes": None}})
     assert code == 200
     now = out["changed"]
     assert now["title"] == "Renamed" and "notes" not in now                # null removes
-    assert now["location"] == "Paris" and now["remind"] == 15 and now["busy"] is False   # kept
+    assert now["location"] == "Lyon" and now["remind"] == 15 and now["busy"] is False   # kept
     assert now["wibble"] == {"a": 1}                                       # unknown kept
     assert now["start"] == "10:00"                                         # fields not sent kept
     on_disk = [e for e in stored(env, "events") if e["id"] == eid][0]

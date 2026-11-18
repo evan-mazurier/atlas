@@ -48,10 +48,7 @@ test("time to fraction and back", () => {
   assert.equal(C.fracToMin(2), 1320);
 });
 
-test("pointToSlot: day view runs time along x, week view along y with 7 columns", () => {
-  const day = { orient: "h", left: 100, top: 0, width: 900, height: 50, cols: 1 };
-  assert.deepEqual(C.pointToSlot(day, 100, 10), { col: 0, min: 420 });
-  assert.deepEqual(C.pointToSlot(day, 550, 10), { col: 0, min: 870 });
+test("pointToSlot: time runs along y with 7 columns", () => {
   const wk = { orient: "v", left: 0, top: 100, width: 700, height: 480, cols: 7 };
   assert.deepEqual(C.pointToSlot(wk, 5, 100), { col: 0, min: 420 });
   assert.deepEqual(C.pointToSlot(wk, 699, 580), { col: 6, min: 1320 });
@@ -88,17 +85,6 @@ test("layoutBlocks: shared blocks split their cluster's width, full blocks span"
   assert.deepEqual(C.layoutBlocks([]), { pos: [], clusters: [], maxTracks: 1, legacy: false });
 });
 
-test("dayTotals: shared events only; work is the union, sessions the sum; fmtHours drops .0", () => {
-  const ev = (start, end, extra) => Object.assign({ day: "2026-10-12", start, end, attention: "shared" }, extra);
-  const t = C.dayTotals([ev("09:00", "12:00"), ev("10:00", "11:00"), ev("11:30", "13:00"), ev("15:00", "16:00", { busy: false }),
-    { day: "2026-10-12", title: "all day" }, ev("09:00", "10:00", { day: "2026-10-13" }), ev("07:00", "08:00", { attention: "full" })], "2026-10-12");
-  assert.deepEqual(t, { work: 240, sessions: 330 });
-  assert.equal(C.fmtHours(240), "4");
-  assert.equal(C.fmtHours(330), "5.5");
-  assert.equal(C.fmtHours(0), "0");
-  assert.deepEqual(C.dayTotals([], "2026-10-12"), { work: 0, sessions: 0 });
-});
-
 test("mineBlocks: full unless the event says shared; placements are full", () => {
   const data = { events: [{ id: "a", day: "d", start: "09:00", end: "10:00", attention: "shared" }, { id: "b", day: "d", start: "10:00", end: "11:00" }],
     placements: [{ day: "d", start: "12:00", end: "13:00", task: "t" }] };
@@ -113,9 +99,8 @@ test("dates: week days start on Monday, labels, ranges", () => {
   assert.equal(C.addDays("2026-03-01", -1), "2026-02-28");
   assert.equal(C.dayDiff("2026-10-05", "2026-10-09"), 4);
   assert.equal(C.dayShort("2026-10-09"), "Fri 9 Oct");
-  assert.equal(C.rangeLabel("day", "2026-10-09"), "Fri 9 Oct 2026");
-  assert.equal(C.rangeLabel("week", "2026-10-09"), "5 to 11 Oct 2026");
-  assert.equal(C.rangeLabel("week", "2026-10-29"), "26 Oct to 1 Nov 2026");
+  assert.equal(C.rangeLabel("2026-10-09"), "5 to 11 Oct 2026");
+  assert.equal(C.rangeLabel("2026-10-29"), "26 Oct to 1 Nov 2026");
   assert.deepEqual(C.fetchRange("2026-10-09"), { from: "2026-10-05", to: "2026-10-11" });
   assert.equal(C.dayFromNum(C.dayNum("2026-10-09")), "2026-10-09");
   assert.equal(C.dayNum("2026-10-10") - C.dayNum("2026-10-09"), 1);
@@ -230,6 +215,13 @@ test("recurText", () => {
   assert.equal(C.recurText(null), "");
   assert.equal(C.recurText({ freq: "daily", interval: 1, until: "2026-10-31" }), "daily until 2026-10-31");
   assert.equal(C.recurText({ freq: "weekly", interval: 2 }), "every 2 weeks");
+});
+
+test("buildRecur drops the weekday rule when the series is no longer monthly", () => {
+  const prev = { freq: "monthly", interval: 1, weekday: "sat", week: "last" };
+  assert.deepEqual(C.buildRecur(prev, "weekly", null, 1), { freq: "weekly", interval: 1 });
+  assert.deepEqual(C.buildRecur(prev, "daily", "2027-01-01", 1), { freq: "daily", interval: 1, until: "2027-01-01" });
+  assert.deepEqual(C.buildRecur(prev, "monthly", null, 1), prev);
 });
 
 test("buildRecur keeps keys it does not know and only applies what changed", () => {

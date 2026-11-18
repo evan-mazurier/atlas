@@ -4,7 +4,7 @@
 import { esc, rosterName } from "../kit/format.js";
 
 const KEY = "atlas.team.roster.open";
-const ORDER = ["scout", "sweeper", "researcher", "implementer", "drafter", "test-runner", "reviewer", "senior-reviewer"];
+const ORDER = ["scout", "sweeper", "researcher", "implementer", "drafter", "test-runner", "reviewer", "senior-reviewer", "advisor"];
 const CHIEF = { id: "main session", model: "opus", use_for: "Main session: scopes the request, decides, splits the work, briefs the helpers, checks what comes back.", never: "Delegates decisions, architecture or API shape" };
 
 export function readOpen() {
@@ -18,7 +18,7 @@ function rank(id) { const i = ORDER.indexOf(id); return i < 0 ? ORDER.length : i
 function model(m) {
   const raw = String(m || "").toLowerCase();
   if (!raw) return "";
-  const k = ["opus", "sonnet", "haiku"].find((x) => raw.includes(x));
+  const k = ["opus", "sonnet", "haiku", "fable"].find((x) => raw.includes(x));
   const col = k ? "var(--m-" + k + ")" : "var(--ink-2)";
   return `<span class="roster-model" style="color:${col}"><i style="background:${col}"></i>${esc(k ? k.charAt(0).toUpperCase() + k.slice(1) : raw)}</span>`;
 }

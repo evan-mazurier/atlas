@@ -40,14 +40,10 @@ export function minToFrac(min, lo = AXIS_MIN, hi = AXIS_MAX) { return clamp((min
 export function fracToMin(f, lo = AXIS_MIN, hi = AXIS_MAX) { return lo + clamp(f, 0, 1) * (hi - lo); }
 
 /** Which day column and which minute a pointer is over.
-    surf = {orient: 'h'|'v', left, top, width, height, cols (1 in day view, 7 in week view), lo, hi}
-    'h': time runs along x, one column; 'v': time runs along y, `cols` columns along x. */
+    surf = {left, top, width, height, cols (7 in the week), lo, hi}; time runs along y, `cols` columns along x. */
 export function pointToSlot(surf, x, y) {
   const lo = surf.lo == null ? AXIS_MIN : surf.lo, hi = surf.hi == null ? AXIS_MAX : surf.hi;
   const cols = surf.cols || 1;
-  if (surf.orient === "h") {
-    return { col: 0, min: fracToMin((x - surf.left) / surf.width, lo, hi) };
-  }
   const col = clamp(Math.floor(((x - surf.left) / surf.width) * cols), 0, cols - 1);
   return { col, min: fracToMin((y - surf.top) / surf.height, lo, hi) };
 }
@@ -87,26 +83,6 @@ export function layoutBlocks(items) {
   return { pos, clusters, maxTracks: Math.max(1, ...clusters.map((c) => c.tracks)), legacy };
 }
 
-/** "6", "6.5": hours with one decimal, `.0` dropped. */
-export function fmtHours(min) { return (Math.round(min / 6) / 10).toFixed(1).replace(/\.0$/, ""); }
-
-/** Day totals over the busy timed SHARED events of `day` (work sessions; full blocks such as training, meals and leisure are left out):
-    work = union of their time, sessions = sum of their durations (minutes). */
-export function dayTotals(events, day) {
-  const spans = (events || [])
-    .filter((e) => e.day === day && e.start && e.end && e.busy !== false && e.attention === "shared")
-    .map((e) => [toMin(e.start), toMin(e.end)])
-    .filter(([a, b]) => a != null && b != null && b > a)
-    .sort((x, y) => x[0] - y[0]);
-  let work = 0, cal = 0, hi = -1;
-  spans.forEach(([a, b]) => {
-    work += b - a;
-    cal += Math.max(0, b - Math.max(a, hi));
-    hi = Math.max(hi, b);
-  });
-  return { work: cal, sessions: work };
-}
-
 /* ---------- dates ---------- */
 export function parseDay(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
@@ -123,13 +99,12 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export function dowOf(iso) { return DOW[parseDay(iso).getDay()]; }
 export function dayShort(iso) { const d = parseDay(iso); return DOW[d.getDay()] + " " + d.getDate() + " " + MON[d.getMonth()]; }
-export function rangeLabel(view, iso) {
-  if (view === "day") return dayShort(iso) + " " + parseDay(iso).getFullYear();
+export function rangeLabel(iso) {
   const days = weekDays(iso), a = parseDay(days[0]), z = parseDay(days[6]);
   const sameMonth = a.getMonth() === z.getMonth();
   return a.getDate() + (sameMonth ? "" : " " + MON[a.getMonth()]) + " to " + z.getDate() + " " + MON[z.getMonth()] + " " + z.getFullYear();
 }
-/** The fetch range for a view: always the whole ISO week, so day navigation inside a week needs no fetch. */
+/** The fetch range: the whole ISO week. */
 export function fetchRange(iso) { const d = weekDays(iso); return { from: d[0], to: d[6] }; }
 export function dayNum(iso) { return Math.round(Date.UTC(...ymd(iso)) / 86400000); }
 export function dayFromNum(n) { const d = new Date(n * 86400000); return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate()); }
@@ -262,6 +237,7 @@ export function allDayEvents(data, day) { return (data.events || []).filter((e) 
 export function buildRecur(prev, repeat, untilIso, interval) {
   if (repeat === "none") return null;
   const r = Object.assign({}, prev, { freq: repeat });
+  if (repeat !== "monthly") { delete r.weekday; delete r.week; }      // the weekday rule only belongs to a monthly series
   if (!r.interval) r.interval = interval || 1;
   if (untilIso) { r.until = untilIso; delete r.count; } else delete r.until;
   return r;

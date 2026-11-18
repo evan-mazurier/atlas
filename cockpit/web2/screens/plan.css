@@ -2,9 +2,12 @@
 .plan{max-width:1480px}
 .plan-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;margin-bottom:16px}
 .plan-label{font:600 28px/1.2 var(--f-ui);margin-top:6px}
-.plan-head-r{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.plan-head-r{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;position:relative}
 .plan-nav{display:inline-flex;gap:6px}
-.plan-loading{font:12px var(--f-mono);color:var(--muted)}
+/* out of the flow so the buttons never move; shown only when a load lasts over 0.4 s (no flash on quick loads) */
+.plan-loading{position:absolute;right:0;top:100%;margin-top:4px;font:12px var(--f-mono);color:var(--muted);white-space:nowrap;pointer-events:none}
+.plan-loading:not(:empty){animation:plan-ld .15s .4s both}
+@keyframes plan-ld{from{opacity:0}to{opacity:1}}
 .plan-link{background:none;border:0;padding:0;color:var(--ink-2);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .plan-link:hover{color:var(--ink)}
 .plan-notice{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid var(--warn);border-radius:var(--r-2);padding:8px 12px;font-size:13px;margin-bottom:var(--gap)}
@@ -35,11 +38,6 @@
 .plan-h.b{bottom:0}
 .plan-off{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--grid) 0 1px,transparent 1px 6px);pointer-events:none;opacity:.8}
 .plan-off-v{position:absolute;left:0;right:0;bottom:0;background:repeating-linear-gradient(135deg,var(--grid) 0 1px,transparent 1px 6px);pointer-events:none;opacity:.8}
-.plan-empty-lane{position:absolute;inset:0;display:flex;align-items:center;padding-left:12px;color:var(--muted);font-size:12px;pointer-events:none}
-.plan-allday{display:flex;gap:10px;align-items:center;margin-bottom:8px;font-size:12px;color:var(--muted)}
-.plan-allday[hidden]{display:none}
-.plan-allday-l{width:96px;flex:none;color:var(--muted)}
-.plan-allday-c{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
 .plan-chip{background:transparent;border:1px solid var(--axis);border-radius:99px;padding:2px 10px;font-size:12px;color:var(--ink);cursor:pointer;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plan-chip:hover{background:var(--line)}
 
@@ -51,9 +49,8 @@
 .plan-wk-ad .plan-wk-gut{align-self:center}
 .plan-wk-main .plan-wk-gut span{position:absolute;right:6px;transform:translateY(-50%)}
 .plan-wk-main .plan-wk-gut span:first-child{transform:none}
-.plan-wk-dh{display:flex;align-items:baseline;gap:6px;justify-content:center;background:transparent;border:0;border-bottom:1px solid var(--line);padding:6px 4px;color:var(--ink-2);cursor:pointer;font-size:12px}
+.plan-wk-dh{display:flex;align-items:baseline;gap:6px;justify-content:center;background:transparent;border:0;border-bottom:1px solid var(--line);padding:6px 4px;color:var(--ink-2);font-size:12px}
 .plan-wk-dh b{font:500 14px var(--f-mono);color:var(--ink)}
-.plan-wk-dh:hover{background:var(--line)}
 .plan-wk-dh.today b{color:var(--accent)}
 .plan-wk-dh.sel{box-shadow:inset 0 -2px 0 var(--ink-2)}
 .plan-wk-ad{border-bottom:1px solid var(--line)}
@@ -71,8 +68,7 @@
 .plan-blk.tiny,.plan-blk.one{flex-direction:row;align-items:baseline;gap:6px}
 .plan-blk.tiny .bs,.plan-blk.one .bs{display:block}
 .plan-blk.tiny .bt,.plan-blk.one .bt{display:block;white-space:nowrap;text-overflow:ellipsis;-webkit-line-clamp:unset}
-/* very short blocks: true start, minimum one readable row in the week, drawn above neighbours (only the visual size changes).
-   The day view keeps the true length: no minimum width, the label clips and the tooltip carries the rest. */
+/* very short blocks: true start, minimum one readable row in the week, drawn above neighbours (only the visual size changes). */
 .plan-blk.short.v{padding:0 4px}   /* drawn at its true length (no min-height), never over the next block; the tooltip has the full title */
 .plan-blk.short.v .bs,.plan-blk.short.v .bt{font-size:10px;line-height:1}
 .plan-blk.short .plan-h.t,.plan-blk.short .plan-h.b{height:3px}   /* short blocks keep a grab area between the resize edges */
@@ -131,4 +127,3 @@
 .plan-blk.third .bt{white-space:nowrap;overflow:hidden;text-overflow:clip}
 .plan-blk.third:not(.v){padding-left:1px;padding-right:1px}
 .plan-blk.third:not(.v) .bt{font-size:10px}   /* a half-hour on the day timeline (~30px) holds a 4-letter tag */
-.plan-tot{margin-top:2px;color:var(--ink-2)}

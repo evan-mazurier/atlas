@@ -20,13 +20,18 @@ function el(tag, cls, text, parent) {
 
 function todayISO() { return C.isoOf(new Date()); }
 
+function startDay(hashQuery) {
+  const d = new URLSearchParams(hashQuery).get("day");
+  const p = C.parseDay(d);
+  return p && C.isoOf(p) === d ? d : todayISO();
+}
+
 function freshState(ctx) {
   const h = location.hash.split("?")[1] || "";
   return {
     ctx,
     dead: false,
-    view: "day",
-    day: todayISO(),
+    day: startDay(h),     // `#/plan?day=YYYY-MM-DD` opens that week (the Brief's "Open in Plan")
     data: null,
     rangeKey: "",
     loading: true,
@@ -309,13 +314,8 @@ function buildHead(root) {
   el("div", "eyebrow", "Plan", left);
   S.els.label = el("h1", "plan-label", "", left);
   const right = el("div", "plan-head-r", null, head);
-  S.els.seg = ui.segmented(right, {
-    options: [{ value: "day", label: "Day" }, { value: "week", label: "Week" }],
-    value: S.view,
-    onChange: (v) => { S.view = v; paint(); },
-  });
   const nav = el("div", "plan-nav", null, right);
-  const step = (dir) => { S.day = C.addDays(S.day, dir * (S.view === "week" ? 7 : 1)); navigated(); };
+  const step = (dir) => { S.day = C.addDays(S.day, dir * 7); navigated(); };
   ui.button(nav, { label: "Previous", onClick: () => step(-1) });
   ui.button(nav, { label: "Today", onClick: () => { S.day = todayISO(); navigated(); } });
   ui.button(nav, { label: "Next", onClick: () => step(1) });
@@ -333,8 +333,7 @@ function navigated() {
 function paint() {
   if (!S || S.dead || !S.els.main) return;
   S.ctx.keepScroll(() => {
-    S.els.label.textContent = C.rangeLabel(S.view, S.day);
-    S.els.seg.set(S.view);
+    S.els.label.textContent = C.rangeLabel(S.day);
     S.els.loading.textContent = S.loading && S.data ? "Loading" : "";
     S.els.errbox.hidden = !S.loadError;
     S.els.errbox.textContent = S.loadError;
@@ -362,7 +361,6 @@ const P = {
   closeForm: () => closeForm(P),
   chooser: (o) => openChooser(P, o),
   today: todayISO,
-  goToDay(iso, view) { S.day = iso; if (view) S.view = view; navigated(); },
 };
 
 export default {

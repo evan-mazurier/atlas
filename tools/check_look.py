@@ -28,7 +28,7 @@ HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 SHORT_RE = re.compile(r"^[A-Z]{2,5}$")
 
 COLOR_TOKENS = ["--bg", "--panel", "--line", "--grid", "--axis", "--ink", "--ink-2", "--muted", "--accent",
-                "--data", "--m-opus", "--m-sonnet", "--m-haiku", "--pos", "--neg", "--ctx-1", "--ctx-2",
+                "--data", "--m-opus", "--m-sonnet", "--m-haiku", "--m-fable", "--pos", "--neg", "--ctx-1", "--ctx-2",
                 "--ok", "--warn", "--crit"]
 OTHER_TOKENS = ["--f-ui", "--f-mono", "--r-1", "--r-2", "--r-3", "--gap", "--pad"]
 REQUIRED_TOKENS = COLOR_TOKENS + OTHER_TOKENS

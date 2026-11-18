@@ -164,7 +164,7 @@ def test_derive_expected_task_record():
     assert t1["crew"] == ["implementer", "reviewer", "senior-reviewer"]
     assert t1["helpers"][0] == {"helper": "implementer", "count": 2, "labels": ["Build ledger store", "Fix findings"]}
     # reviewer + senior-reviewer failing the SAME version burn one round; the duplicate agent verdict is dropped
-    assert t1["rounds"] == {"needs_changes": 1, "budget": 2, "granted": 0, "left": 1, "own": 1, "carried": 0}
+    assert t1["rounds"] == {"needs_changes": 1, "budget": 2, "granted": 0, "left": 1, "own": 1, "carried": 0, "own_routine": 1, "own_senior": 0, "used": 1}
     assert [(v["helper"], v["verdict"], v["version"]) for v in t1["verdicts"]] == [
         ("reviewer", "NEEDS_CHANGES", 2), ("senior-reviewer", "NEEDS_CHANGES", 2), ("reviewer", "READY", 3)]
     assert t1["final_verdict"] == "READY" and t1["checked"] is True and t1["unverified_flag"] is False
@@ -208,12 +208,12 @@ def test_derive_switch_carries_spent_budget_as_min():
             E("rework_granted", 21, task="abcd1234-2", n=1)]
     t1, t2 = derive.derive_v2(evs, wf())
     assert t1["status"] == "switched" and t1["rounds"]["left"] == 0
-    assert t2["rounds"] == {"needs_changes": 2, "budget": 1, "granted": 1, "left": 0, "own": 0, "carried": 2}   # min(2, 1) budget, granted 0+1
+    assert t2["rounds"] == {"needs_changes": 2, "budget": 1, "granted": 1, "left": 0, "own": 0, "carried": 2, "own_routine": 0, "own_senior": 0, "used": 2}   # min(2, 1) budget, granted 0+1
 
 
 def test_derive_switch_without_spent_budget_resets():
     evs = [E("work_type", 1, type="coding", task="abcd1234-1"), E("work_type", 2, type="chore", task="abcd1234-2")]
-    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 0, "budget": 1, "granted": 0, "left": 1, "own": 0, "carried": 0}
+    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 0, "budget": 1, "granted": 0, "left": 1, "own": 0, "carried": 0, "own_routine": 0, "own_senior": 0, "used": 0}
 
 
 def test_derive_chained_redeclarations_keep_the_spent_rounds():
@@ -507,7 +507,7 @@ def test_derive_carried_rounds_add_to_new_task_versions():
            E("work_type", 6, type="chore", task="abcd1234-2", carried=True),
            E("edit", 7, task="abcd1234-2", path="p", tool="Edit", version=1),
            E("verdict", 8, task="abcd1234-2", agent_id="C", helper="reviewer", verdict="NEEDS_CHANGES", version=1, findings=1)]
-    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 3, "budget": 1, "granted": 0, "left": 0, "own": 1, "carried": 2}
+    assert derive.derive_v2(evs, wf())[1]["rounds"] == {"needs_changes": 3, "budget": 1, "granted": 0, "left": 0, "own": 1, "carried": 2, "own_routine": 1, "own_senior": 0, "used": 3}
 
 
 def test_derive_unknown_verdict_version_never_checks():
@@ -758,7 +758,7 @@ def test_derive_abandoned_task_keeps_its_rounds_and_the_next_is_fresh():
     assert t1["status"] == "abandoned" and t1["ended"] == T(30)
     assert t1["rounds"]["own"] == 3 and t1["rounds"]["needs_changes"] == 3 and t1["rounds"]["carried"] == 0
     assert t2["status"] == "open" and t2["rounds"] == {"needs_changes": 0, "budget": 2, "granted": 0, "left": 2,
-                                                       "own": 0, "carried": 0}
+                                                       "own": 0, "carried": 0, "own_routine": 0, "own_senior": 0, "used": 0}
 
 
 def test_derive_legacy_stream_without_task_abandoned_is_unchanged():
@@ -773,7 +773,7 @@ def test_derive_recall_brings_the_old_rounds_back_to_the_current_task():
                              E("rework_recalled", 31, task="abcd1234-2", from_task="abcd1234-1", nc=3, path="a.py")]
     t1, t2 = derive.derive_v2(evs, wf())
     assert t1["status"] == "abandoned"
-    assert t2["rounds"] == {"needs_changes": 3, "budget": 1, "granted": 0, "left": 0, "own": 0, "carried": 3}
+    assert t2["rounds"] == {"needs_changes": 3, "budget": 1, "granted": 0, "left": 0, "own": 0, "carried": 3, "own_routine": 0, "own_senior": 0, "used": 3}
 
 
 def test_derive_grant_for_task_counts_on_the_abandoned_task():
@@ -859,3 +859,132 @@ def test_derive_late_verdicts_count_on_the_open_or_next_task_not_on_their_launch
     assert t1["rounds"]["needs_changes"] == 0 and t1["caught"] == 3
     assert t2["rounds"]["carried"] == 1 and t2["rounds"]["own"] == 0
     assert t3["rounds"]["carried"] == 1 and t3["rounds"]["needs_changes"] == 1
+
+
+def test_derive_left_counts_the_busiest_tier_not_the_total():
+    evs = [E("work_type", 1, type="coding", task="abcd1234-1")]
+    for i, h in enumerate(["reviewer", "reviewer", "senior-reviewer"]):
+        evs.append(E("verdict", 2 + i, task="abcd1234-1", agent_id="V%d" % i, helper=h, verdict="NEEDS_CHANGES",
+                     version=i + 1, findings=1, round=True))
+    r = derive.derive_v2(evs, wf())[0]["rounds"]
+    assert r["needs_changes"] == 3 and r["own_routine"] == 2 and r["own_senior"] == 1
+    assert r["used"] == 2 and r["left"] == 0 and r["budget"] == 2
+    evs.append(E("rework_granted", 9, task="abcd1234-1", n=1))
+    assert derive.derive_v2(evs, wf())[0]["rounds"]["left"] == 1
+
+
+# ---- Fable weight, tier and the fable bucket (design notes, not in this copy §6)
+
+def test_fable_weight_and_tier_and_fallback():
+    assert store.model_weight("claude-fable-5-2") == 4.0 and store.model_weight("Claude-FABLE-5-2", 500_000) == 4.0
+    assert store.tier("claude-fable-5-2") == "fable"
+    assert store.model_weight("claude-opus-5-5") == 2.0 and store.tier("claude-opus-5-5") == "opus"
+    assert store.model_weight("claude-mystery-9") == 1.0 and store.tier("claude-mystery-9") == "sonnet"
+    assert store.model_weight(None) == 1.0 and store.tier(None) == "sonnet"
+
+
+def test_stats_fable_cost_fills_the_fable_bucket_only(ledger):
+    evs = now_stream()
+    evs.insert(4, {"v": 2, "t": evs[3]["t"], "ev": "cost", "sid": "ffff0000-aaaa", "scope": "AD1", "helper": "advisor",
+                   "model": "claude-fable-5-2", "in": 10, "out": 10, "cache_read": 0, "cache_write": 0, "weighted": 80})
+    seed(ledger, evs)
+    p = stats.compute()
+    today = p["usage_by_day"][-1]
+    assert today["fable"] == 80 and today["opus"] == 40 and today["sonnet"] == 0 and today["haiku"] == 0
+    assert all("fable" in d for d in p["usage_by_day"])
+    by = {(x["helper"], x["tier"]): x["weighted"] for x in p["usage_by_helper"]}
+    assert by == {("chief", "opus"): 40, ("advisor", "fable"): 80}
+
+
+def test_derive_title_skips_an_advisor_label():
+    evs = [E("work_type", 1, type="coding", task="abcd1234-1"),
+           E("helper_start", 2, task="abcd1234-1", helper="advisor", label="scope: big task", tuid="u1"),
+           E("helper_start", 3, task="abcd1234-1", helper="implementer", label="Build the thing", tuid="u2")]
+    assert derive.derive_v2(evs, wf())[0]["title"] == "Build the thing"
+    only = [E("work_type", 1, type="coding", task="abcd1234-1"),
+            E("helper_start", 2, task="abcd1234-1", helper="advisor", label="scope: big task", tuid="u1")]
+    assert derive.derive_v2(only, wf())[0]["title"] != "scope: big task"
+
+
+# ---- weekly report summary (report_summary + the report endpoint's `summary`) ----
+_REPORT_MD = """# Weekly report 2026-W01
+
+<!-- numbers:start -->
+
+## Numbers
+
+### Tasks
+
+- Closed: 4
+
+<!-- numbers:end -->
+
+## Lessons: three observations
+
+Context paragraph, not an item.
+
+1. **Rework went up.** Body one
+continues here.
+2. **Senior review catches more.** Body two.
+3. Plain headline without bold
+
+## Three changes (prompts, skills, routing)
+
+### Earlier changes
+
+| Change | Proposed | Status |
+| --- | --- | --- |
+| Rule A | W1 | worked |
+| Rule B | W2 | missed |
+
+Some paragraph.
+
+1. **Measure X.** Detail.
+2. **Show Y.** Detail.
+
+## Post ideas
+
+1. **Not a change.** Ignored.
+"""
+_REPORT_JSON = {"tasks": {"closed": 4, "first_pass_ready_pct": 50.0}, "time_hours": {"total": 3.5},
+                "usage_weighted": {"total_task_cost": 1000}, "review": {"needs_changes_rounds": 2, "rework_concentration": {"per_task": 0.5}}}
+
+
+def test_report_summary_full(tmp_path):
+    from ledger2 import report_summary as rs
+    s = rs.build_summary(_REPORT_MD, _REPORT_JSON)
+    assert [k["key"] for k in s["kpis"]] == ["tasks_closed", "first_pass_ready_pct", "rework_per_task", "hours", "weighted_usage"]
+    assert [l["headline"] for l in s["lessons"]] == ["Rework went up.", "Senior review catches more.", "Plain headline without bold"]
+    assert s["lessons"][0]["body"] == "Body one continues here."
+    assert s["changes"] == [{"name": "Rule A", "status": "worked"}, {"name": "Rule B", "status": "missed"}]
+    assert s["proposed"] == ["Measure X.", "Show Y."]
+
+
+def test_report_summary_without_lessons_or_json():
+    from ledger2 import report_summary as rs
+    s = rs.build_summary("# Weekly report\n\n## Numbers\n\n- Closed: 1\n", None)
+    assert s == {"kpis": [], "lessons": [], "changes": [], "proposed": []}
+    s = rs.build_summary(_REPORT_MD, {"tasks": {"closed": 2}})
+    assert [k["key"] for k in s["kpis"]] == ["tasks_closed"]
+    assert rs.build_summary(_REPORT_MD, {"review": {"needs_changes_rounds": 3}, "tasks": {"closed": 6}})["kpis"][-1]["value"] == 0.5
+
+
+def test_report_summary_malformed_never_raises():
+    from ledger2 import report_summary as rs
+    md = "## Three changes\n\n### Earlier changes\n\n| only | one\n|---|\n| a |\n\n## Lessons\n\n1.\n2. ****\n"
+    s = rs.build_summary(md, {"tasks": "oops", "time_hours": [], "usage_weighted": None})
+    assert s["kpis"] == [] and s["lessons"] == []
+    assert rs.build_summary(None, "not a dict") == {"kpis": [], "lessons": [], "changes": [], "proposed": []}
+
+
+def test_report_endpoint_summary(tmp_path):
+    rd = tmp_path / "reports"
+    rd.mkdir()
+    (rd / "2026-W01.md").write_text(_REPORT_MD, encoding="utf-8")
+    code, body = api.get("/api/v2/ledger/report", {"week": "2026-W01"})
+    assert code == 200 and body["markdown"] == _REPORT_MD and body["summary"]["kpis"] == []   # no json: no kpis
+    assert len(body["summary"]["lessons"]) == 3
+    (rd / "2026-W01.json").write_text(json.dumps(_REPORT_JSON), encoding="utf-8")
+    assert len(api.get("/api/v2/ledger/report", {"week": "2026-W01"})[1]["summary"]["kpis"]) == 5
+    (rd / "2026-W01.json").write_text("{broken", encoding="utf-8")
+    assert api.get("/api/v2/ledger/report", {"week": "2026-W01"})[1]["summary"]["kpis"] == []

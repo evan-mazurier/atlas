@@ -70,11 +70,22 @@ def test_shell_only_task_trips_after_three_rounds_and_guards_refuse(env):
 def test_two_reviewers_launched_together_count_once(env):
     env.bash(": team-type coding")
     start(env, "A1")
+    start(env, "A2")
+    answer(env, "A1", NC)
+    answer(env, "A2", NC)
+    assert env.state()["needs_changes"] == 1
+    assert [e["round"] for e in nc_events(env)] == [True, False]
+
+
+def test_routine_and_senior_launched_together_are_one_round_each(env):
+    env.bash(": team-type coding")
+    start(env, "A1")
     start(env, "A2", "senior-reviewer")
     answer(env, "A1", NC)
     answer(env, "A2", NC, "senior-reviewer")
-    assert env.state()["needs_changes"] == 1
-    assert [e["round"] for e in nc_events(env)] == [True, False]
+    S = env.state()
+    assert S["needs_changes"] == 2 and S["nc_rounds_t"] == {"routine": 1, "senior": 1}
+    assert [e["round"] for e in nc_events(env)] == [True, True]
 
 
 def test_reviewer_launched_after_the_failing_review_arrived_is_a_new_round(env):
@@ -374,7 +385,9 @@ def _parity(env):
     t = _derive(env)[-1]
     r = t["rounds"]
     assert r["needs_changes"] == S["needs_changes"] and r["budget"] == S["budget"] and r["granted"] == S["granted"]
-    assert r["left"] == max(0, S["budget"] + S["granted"] - S["needs_changes"])
+    used = S["carried_nc"] + max((S.get("nc_rounds_t") or {"routine": 0}).values() or [0])   # the hook's per-tier rule
+    assert r["used"] == used and r["left"] == max(0, S["budget"] + S["granted"] - used)
+    assert (r["own_routine"], r["own_senior"]) == (S["nc_rounds_t"].get("routine", 0), S["nc_rounds_t"].get("senior", 0))
     return t
 
 
@@ -391,6 +404,26 @@ def test_derive_matches_the_hook_through_shell_only_rounds_and_joint_reviewers(e
     answer(env, "A3", NC)
     t = _parity(env)
     assert t["rounds"]["own"] == 3 == env.state()["needs_changes"]
+
+
+def test_derive_mixed_tiers_match_the_hook(env):
+    env.bash(": team-type coding")                                         # budget 2
+    env.set_mode("enforce")
+    for i in range(2):
+        env.review("r%d" % i, "R%d" % i, NC)
+    env.review("s0", "S0", NC, helper="senior-reviewer")
+    S = env.state()
+    assert S["needs_changes"] == 3 and S["nc_rounds_t"] == {"routine": 2, "senior": 1}
+    t = _parity(env)
+    assert t["rounds"]["needs_changes"] == 3 and t["rounds"]["left"] == 0 and t["rounds"]["used"] == 2
+    assert t["rounds"]["own_routine"] == 2 and t["rounds"]["own_senior"] == 1
+    env.review("s1", "S1", NC, helper="senior-reviewer")                   # senior tier at 2: still within budget
+    assert not denied(env.agent("implementer", "b1"))
+    _parity(env)
+    env.review("s2", "S2", NC, helper="senior-reviewer")                   # senior tier at 3 > 2
+    assert denied(env.agent("implementer", "b2"))
+    t = _parity(env)
+    assert t["rounds"]["used"] == 3 and t["rounds"]["left"] == 0
 
 
 def test_derive_abandon_then_fresh_task_and_carry_match_the_hook(env):

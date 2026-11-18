@@ -7,13 +7,12 @@ import {
 } from "../kit/format.js";
 import { renderMarkdown } from "../kit/markdown.js";
 import { bypassListHTML, wireBypassList } from "./ledger-bypass.js";
-import { TASK_HEAD_TIPS, roundsParts, statusWord, taskCellParts, taskTitle, verdictParts } from "./ledger-model.js";
+import { TASK_HEAD_TIPS, TIERS, TIER_NAMES, changeParts, changeTone, dayTotal, reportKpiText, roundsParts, statusWord, taskCellParts, taskTitle, verdictParts } from "./ledger-model.js";
 import { integrityLabel, integrityLevel, integrityPanelHTML } from "./ledger-integrity.js";
 
 let S = null;
 let onKey = null;
 
-const TIER_NAMES = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" };
 const TYPES = [["", "All types"], ["coding", "Coding"], ["research", "Research"], ["writing", "Writing"], ["chore", "Chore"],
   ["legal", "Legal or money"], ["quick-question", "Quick question"], ["playbook", "Playbook"], ["undeclared", "Undeclared"]];
 const STATUSES = [["", "All statuses"], ["open", "In progress"], ["done", "Closed"], ["switched", "Next task started"], ["abandoned", "Abandoned"], ["ended", "Session ended"]];
@@ -61,7 +60,7 @@ function card(parent, title, sub, cls) {
 }
 
 function tierLegend(host, kit) {
-  kit.legend(host, ["opus", "sonnet", "haiku"].map((m) => ({ name: TIER_NAMES[m], color: "var(--m-" + m + ")" })), "sq");
+  kit.legend(host, TIERS.map((m) => ({ name: TIER_NAMES[m], color: "var(--m-" + m + ")" })), "sq");
 }
 
 function renderKpis(kit, stats, host) {
@@ -86,6 +85,69 @@ function renderKpis(kit, stats, host) {
   });
 }
 
+const REPORT_KEY = "atlas.ledger.report.open";
+const FULL_KEY = "atlas.ledger.report.full.open";
+
+function readOpen(key, dflt) {
+  try { const v = localStorage.getItem(key); return v == null ? dflt : v === "1"; } catch (e) { return dflt; }
+}
+function saveOpen(key, open) {
+  try { localStorage.setItem(key, open ? "1" : "0"); } catch (e) { /* storage unavailable: the choice just is not remembered */ }
+}
+
+function hasSummary(sum) {
+  return !!sum && ["kpis", "lessons", "changes", "proposed"].some((k) => Array.isArray(sum[k]) && sum[k].length);
+}
+
+/** The weekly report: always-visible summary (KPI tiles, lessons, earlier changes, proposed changes), then the full text in a disclosure. */
+function renderReport(host, md, sum, ui) {
+  if (hasSummary(sum)) {
+    const kp = (sum.kpis || []);
+    if (kp.length) {
+      const box = el("div", "kpis ledger-rkpis", null, host);
+      kp.forEach((k) => { const t = el("div", "kpi", null, box); el("div", "kl", k.label, t); el("div", "kv", reportKpiText(k), t); });
+    }
+    if ((sum.lessons || []).length) {
+      el("h4", "ledger-rh", "Lessons", host);
+      const ol = el("ol", "ledger-rlist", null, host);
+      sum.lessons.forEach((l) => el("li", null, l.headline, ol));
+    }
+    if ((sum.changes || []).length) {
+      el("h4", "ledger-rh", "Earlier changes", host);
+      const ul = el("ul", "ledger-rchanges", null, host);
+      sum.changes.forEach((c) => {
+        const li = el("li", null, null, ul);
+        el("span", "ledger-rname", c.name, li);
+        const st = el("span", "ledger-rstat", null, li);
+        const parts = changeParts(c.status);
+        el("span", "chip ledger-rchip " + changeTone(c.status), parts.key, st);
+        if (parts.rest) el("span", "ledger-rrest", parts.rest, st);
+      });
+    }
+    if ((sum.proposed || []).length) {
+      el("h4", "ledger-rh", "Proposed changes", host);
+      const ol = el("ol", "ledger-rlist", null, host);
+      sum.proposed.forEach((t) => el("li", null, t, ol));
+    }
+  } else {
+    el("p", "note", "No summary in this report.", host);
+  }
+  const full = el("div", "ledger-rfull", null, host);
+  const btn = el("button", "ledger-rtoggle ledger-rfull-toggle", null, full);
+  btn.type = "button";
+  el("span", "chev", null, btn).setAttribute("aria-hidden", "true");
+  el("span", null, "Full report", btn);
+  const body = el("div", "ledger-rfull-body", null, full);
+  renderMarkdown(body, md, { grid: true, button: ui && ui.button });
+  const set = (open, save) => {
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    body.hidden = !open;
+    if (save) saveOpen(FULL_KEY, open);
+  };
+  btn.addEventListener("click", () => set(body.hidden, true));
+  set(readOpen(FULL_KEY, false), false);
+}
+
 function renderStats(ctx, stats) {
   const { kit } = ctx;
   const host = S.statsEl;
@@ -100,13 +162,13 @@ function renderStats(ctx, stats) {
   tierLegend(u.lg, kit);
   const ub = el("div", "cb", null, u.c);
   if (days.length) {
-    const tot = Math.max(...days.map((d) => (d.opus || 0) + (d.sonnet || 0) + (d.haiku || 0)));
+    const tot = Math.max(...days.map(dayTotal));
     const ticks = niceTicks(tot / 1e6, 3);
     const step = ticks.length > 1 ? ticks[1] : 1;
     kit.mount(ub, (b, w) => kit.columnChart(b, w, {
       h: 210, mode: "stack", cats: days.map((d) => dayLabel(d.day)), xlabels: days.map((d) => dayLabel(d.day)), titles: days.map((d) => dayTitle(d.day)),
       xEvery: 2, labelW: 46, ticks, fmtTick: (t) => (t === 0 ? "0" : t.toFixed(tickDecimals(step)) + "M"), fmtTip: (v) => v.toFixed(2) + "M",
-      series: ["opus", "sonnet", "haiku"].map((m) => ({ name: TIER_NAMES[m], color: "var(--m-" + m + ")", vals: days.map((d) => (d[m] || 0) / 1e6) })),
+      series: TIERS.map((m) => ({ name: TIER_NAMES[m], color: "var(--m-" + m + ")", vals: days.map((d) => (d[m] || 0) / 1e6) })),
     }));
   }
 
@@ -382,8 +444,20 @@ export default {
     S.intPanel.hidden = true;
 
     S.statsEl = el("div", "ledger-stats", null, wrap);
-    const rc = card(wrap, "Weekly report", "The saved report for the selected week", "ledger-report");
+    const rc = card(wrap, "", "The saved report for the selected week", "ledger-report");
+    const rh = rc.c.querySelector("h3");
+    const rtog = el("button", "ledger-rtoggle", null, rh);
+    rtog.type = "button";
+    el("span", "chev", null, rtog).setAttribute("aria-hidden", "true");
+    el("span", null, "Weekly report", rtog);
     S.reportEl = el("div", "ledger-report-body", null, rc.c);
+    const setReportOpen = (open, save) => {
+      rtog.setAttribute("aria-expanded", open ? "true" : "false");
+      S.reportEl.hidden = !open;
+      if (save) saveOpen(REPORT_KEY, open);
+    };
+    rtog.addEventListener("click", () => setReportOpen(S.reportEl.hidden, true));
+    setReportOpen(readOpen(REPORT_KEY, true), false);
     S.reportSig = "";
     const tc = el("div", "card ledger-tasks", null, wrap);
     const ch = el("div", "ch", null, tc);
@@ -457,25 +531,26 @@ export default {
     }
     async function loadReport() {
       const week = S.week;
-      let md = null, msg = "";
+      let md = null, msg = "", sum = null;
       try {
         if (S.sample) throw new Error("report: sample mode");
         const d = await ctx.api.get("/api/v2/ledger/report?week=" + encodeURIComponent(week));
         md = d && typeof d.markdown === "string" ? d.markdown : "";
+        sum = d && d.summary && typeof d.summary === "object" ? d.summary : null;
       } catch (e) {
         const m = String(e && e.message || e);
         msg = (e && e.status === 404) || S.sample ? "No saved report for this week. Run /weekly-report to create one."
           : "The weekly report could not be read (" + m + ").";
       }
       if (!S || S.week !== week) return;
-      const sig = week + "|" + (md == null ? "!" + msg : md);
+      const sig = week + "|" + (md == null ? "!" + msg : md) + "|" + JSON.stringify(sum);
       if (sig === S.reportSig) return;
       S.reportSig = sig;
       ctx.keepScroll(() => {
         S.reportEl.textContent = "";
         if (md == null) el("p", "note", msg, S.reportEl);
         else if (!md.trim()) el("p", "note", "The saved report is empty.", S.reportEl);
-        else renderMarkdown(S.reportEl, md);
+        else renderReport(S.reportEl, md, sum, ctx.ui);
       });
     }
     async function refresh() {

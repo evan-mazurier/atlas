@@ -121,6 +121,91 @@ def _plan_titles(sessions: list[dict]) -> dict:
         return {}
 
 
+_verdict_cache: dict = {"key": None, "map": {}, "task_of": {}, "wtypes": {}}
+OTHER_RUNS_TITLE = "Other helper runs"
+
+
+def _read_today(day: str) -> dict | None:
+    """One read of today's ledger day file: agent_id -> last verdict, agent_id -> task (the launch task), task ->
+    declared {type, area, t}. Cached by (file, mtime, size). None on any trouble."""
+    try:
+        store = importlib.import_module("ledger2.store")
+        path = store.day_file(day)
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+        if _verdict_cache["key"] == key:
+            return _verdict_cache
+        verdicts: dict = {}
+        starts: dict = {}                    # launch id (tuid) -> the launch task
+        task_of: dict = {}                   # agent_id -> task
+        exact: set = set()                   # agent ids whose task came from a matched launch
+        wtypes: dict = {}
+        for e in store.read_jsonl(path):
+            ev, aid = e.get("ev"), e.get("agent_id")
+            if ev == "verdict" and aid and e.get("verdict"):
+                verdicts[str(aid)] = str(e["verdict"])
+            elif ev == "helper_start" and e.get("tuid"):
+                starts[str(e["tuid"])] = e.get("task")
+            elif ev == "helper_paired" and aid:
+                aid = str(aid)
+                launch = starts.get(str(e.get("tuid"))) if e.get("tuid") else None
+                if launch and aid not in exact:
+                    task_of[aid], _ = launch, exact.add(aid)
+                elif aid not in task_of and e.get("task"):
+                    task_of[aid] = e["task"]            # unmatched pairing: the task open at pairing time
+            elif ev == "helper_resume" and aid and str(aid) not in task_of and e.get("task"):
+                task_of[str(aid)] = e["task"]           # a resumed helper keeps its launch task when it is known
+            elif ev in ("work_type", "playbook") and e.get("task"):
+                wtypes[str(e["task"])] = {"type": "playbook" if ev == "playbook" else e.get("type"),
+                                          "area": e.get("area"), "t": e.get("t")}
+        _verdict_cache.update(key=key, map=verdicts, task_of=task_of, wtypes=wtypes)
+        return _verdict_cache
+    except Exception as exc:  # noqa: BLE001 — chips and groups are optional, never fail the payload
+        print(f"shell_api: ledger join failed: {exc!r}", file=sys.stderr)
+        return None
+
+
+def _todays_verdicts(day: str) -> dict:
+    """agent_id -> the last `verdict` of that helper run today (READY / NEEDS_CHANGES / ESCALATE); {} on any trouble."""
+    c = _read_today(day)
+    return c["map"] if c else {}
+
+
+def _ledger_tasks() -> list:
+    """Every derived task record (ledger2.query.all_tasks, cached there); [] on any trouble."""
+    try:
+        return importlib.import_module("ledger2.query").all_tasks() or []
+    except Exception as exc:  # noqa: BLE001
+        print(f"shell_api: all_tasks failed: {exc!r}", file=sys.stderr)
+        return []
+
+
+def _task_groups(helper_ids_by_task: dict, wtypes: dict) -> list[dict]:
+    """tasks[] for one session: {id, type, area, title, plan_ref, plan_title, started, status, final_verdict, runs}, by started;
+    the null-id group (helper runs without a task) last. A task unknown to all_tasks falls back to today's work_type event."""
+    ids = [t for t in helper_ids_by_task if t]
+    recs = {}
+    if ids:
+        recs = {t.get("id"): t for t in _ledger_tasks() if t.get("id") in helper_ids_by_task}
+    pt = _plan_titles([{"plan_ref": r["plan_ref"]} for r in recs.values() if r.get("plan_ref")])
+    out = []
+    for tid in ids:
+        r, w = recs.get(tid), wtypes.get(tid) or {}
+        if r:
+            out.append({"id": tid, "type": r.get("type"), "area": r.get("area"), "title": r.get("title"),
+                        "plan_ref": r.get("plan_ref"), "plan_title": pt.get(r.get("plan_ref")),
+                        "started": r.get("started"), "status": r.get("status"), "final_verdict": r.get("final_verdict")})
+        else:
+            out.append({"id": tid, "type": w.get("type"), "area": w.get("area"), "title": None, "plan_ref": None,
+                        "plan_title": None, "started": w.get("t"), "status": None, "final_verdict": None})
+        out[-1]["runs"] = len(helper_ids_by_task[tid])
+    out.sort(key=lambda g: str(g["started"] or ""))
+    if None in helper_ids_by_task:
+        out.append({"id": None, "type": None, "area": None, "title": OTHER_RUNS_TITLE, "plan_ref": None, "plan_title": None,
+                    "started": None, "status": None, "final_verdict": None, "runs": len(helper_ids_by_task[None])})
+    return out
+
+
 def team_payload() -> tuple[int, dict]:
     snap = _snapshot()
     if not snap.get("ok"):
@@ -128,8 +213,25 @@ def team_payload() -> tuple[int, dict]:
     areas = load_areas()
     out = dict(snap)
     titles = _plan_titles(snap.get("sessions") or [])
-    out["sessions"] = [dict(s, area=_session_area(areas, s), plan_title=titles.get(s.get("plan_ref")))
-                       for s in snap.get("sessions") or []]
+    sessions = snap.get("sessions") or []
+    cache = _read_today(str(snap.get("now") or dt.date.today().isoformat())[:10]) \
+        if any(s.get("helpers") for s in sessions) else None
+    verdicts = cache["map"] if cache else {}
+    task_of = cache["task_of"] if cache else {}
+    wtypes = cache["wtypes"] if cache else {}
+
+    def one(s: dict) -> dict:
+        d = dict(s, area=_session_area(areas, s), plan_title=titles.get(s.get("plan_ref")))
+        all_ids = d.pop("helper_ids_all", None)         # every run's id when the chart list was capped
+        if s.get("helpers"):
+            d["helpers"] = [dict(h, verdict=verdicts.get(h.get("agent_id")), task=task_of.get(h.get("agent_id")))
+                            for h in s["helpers"]]
+            by_task: dict = {}
+            for aid in (all_ids or [h.get("agent_id") for h in d["helpers"]]):
+                by_task.setdefault(task_of.get(aid), []).append(aid)
+            d["tasks"] = _task_groups(by_task, wtypes)
+        return d
+    out["sessions"] = [one(s) for s in sessions]
     return 200, out
 
 
@@ -167,7 +269,7 @@ def _sentences(text: str) -> list[str]:
 
 def _use_for(desc: str) -> str:
     import re
-    desc = re.sub(r"^[^.]{0,40}\((?:Opus|Sonnet|Haiku)\)\.\s*", "", desc, flags=re.I)
+    desc = re.sub(r"^[^.]{0,40}\((?:Opus|Sonnet|Haiku|Fable)\)\.\s*", "", desc, flags=re.I)
     keep = [x for x in _sentences(desc) if not re.match(r"(never|not for)\b", x, re.I)]
     out = " ".join(keep[:2])
     return out if len(out) <= 220 else out[:217].rstrip() + "..."
